@@ -8,6 +8,67 @@ This is the Tekton Operator - a Kubernetes operator that installs, upgrades, and
 
 The operator follows Kubernetes controller/reconciler patterns and uses the Knative injection framework for dependency management.
 
+## Installation Methods
+
+### Recommended: OperatorHub (Production Use)
+
+**For production environments, OperatorHub is the recommended installation method.**
+
+**Benefits:**
+- Automatic lifecycle management via OLM (Operator Lifecycle Manager)
+- Automatic upgrades through subscription channels (stable, preview, alpha)
+- Built-in dependency resolution
+- Rollback capability if issues occur
+- Standardized management across all operators
+
+**Installation:**
+
+*Kubernetes:*
+- Visit https://operatorhub.io/operator/tektoncd-operator
+- Follow instructions to install via OLM
+
+*OpenShift:*
+- Access OperatorHub directly from OpenShift Console
+- Search for "Tekton Operator" and install
+
+**After installation via OperatorHub:**
+```bash
+# Create TektonConfig to install components (basic profile)
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/operator/main/config/crs/kubernetes/config/basic/operator_v1alpha1_config_cr.yaml
+
+# Or for all components (Kubernetes)
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/operator/main/config/crs/kubernetes/config/all/operator_v1alpha1_config_cr.yaml
+```
+
+**Installation Profiles:**
+
+| Platform              | Profile | Installed Components                                  |
+|-----------------------|---------|-------------------------------------------------------|
+| Kubernetes, OpenShift | lite    | Pipeline                                              |
+| Kubernetes, OpenShift | basic   | Pipeline, Trigger, Chains                             |
+| Kubernetes            | all     | Pipeline, Trigger, Chains, Dashboard                  |
+| OpenShift             | all     | Pipeline, Trigger, Chains, Pipelines as Code, Addons  |
+
+### Alternative: Direct YAML Installation
+
+**Use for:** Quick testing, CI/CD environments, air-gapped setups
+
+**Note:** You must manually manage operator upgrades with this method.
+
+```bash
+# Install operator
+kubectl apply -f https://storage.googleapis.com/tekton-releases/operator/latest/release.yaml
+
+# Create TektonConfig CR
+kubectl apply -f https://raw.githubusercontent.com/tektoncd/operator/main/config/crs/kubernetes/config/basic/operator_v1alpha1_config_cr.yaml
+```
+
+### Development: From Source
+
+**Use for:** Development and testing only
+
+See "Deploying the Operator" section below for development installation instructions.
+
 ## Build & Development Commands
 
 ### Building and Testing
@@ -55,7 +116,9 @@ export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock
 make dev-setup
 ```
 
-### Deploying the Operator
+### Deploying the Operator (Development)
+
+**Note:** For production installations, use OperatorHub (see "Installation Methods" section above). These instructions are for development/testing from source.
 
 **For Kubernetes:**
 ```bash
