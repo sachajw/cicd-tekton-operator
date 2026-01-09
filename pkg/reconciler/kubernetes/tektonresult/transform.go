@@ -36,16 +36,18 @@ import (
 
 const (
 	// Results ConfigMap
-	configAPI             = "tekton-results-api-config"
-	deploymentAPI         = "tekton-results-api"
-	configINFO            = "tekton-results-info"
-	configMetrics         = "tekton-results-config-observability"
-	configPostgresDB      = "tekton-results-postgres"
-	pvcLoggingVolume      = "tekton-logs"
-	apiContainerName      = "api"
-	googleAPPCredsEnvName = "GOOGLE_APPLICATION_CREDENTIALS"
-	googleCredsVolName    = "google-creds"
-	googleCredsPath       = "/creds/google"
+	configAPI                         = "tekton-results-api-config"
+	deploymentAPI                     = "tekton-results-api"
+	configINFO                        = "tekton-results-info"
+	configMetrics                     = "tekton-results-config-observability"
+	configPostgresDB                  = "tekton-results-postgres"
+	pvcLoggingVolume                  = "tekton-logs"
+	apiContainerName                  = "api"
+	retentionPolicyAgentContainerName = "retention-policy-agent"
+	watcherContainerName              = "watcher"
+	googleAPPCredsEnvName             = "GOOGLE_APPLICATION_CREDENTIALS"
+	googleCredsVolName                = "google-creds"
+	googleCredsPath                   = "/creds/google"
 
 	loggingProxyPath              = "LOGGING_PLUGIN_PROXY_PATH"
 	loggingAPIURL                 = "LOGGING_PLUGIN_API_URL"
@@ -56,8 +58,14 @@ const (
 	logsAPIKey                    = "LOGS_API"
 	logsTypeKey                   = "LOGS_TYPE"
 
-	resultAPIDeployment     = "tekton-results-api"
-	resultWatcherDeployment = "tekton-results-watcher"
+	resultAPIDeployment                          = "tekton-results-api"
+	resultWatcherDeployment                      = "tekton-results-watcher"
+	resultWatcherContainer                       = "watcher"
+	tektonResultWatcherName                      = "tekton-results-watcher"
+	tektonResultWatcherServiceName               = "tekton-results-watcher"
+	tektonResultWatcherStatefulServiceName       = "STATEFUL_SERVICE_NAME"
+	tektonResultWatcherStatefulControllerOrdinal = "STATEFUL_CONTROLLER_ORDINAL"
+	tektonResultleaderElectionConfig             = "tekton-results-config-leader-election"
 )
 
 var (
@@ -71,6 +79,13 @@ var (
 		"S3_ACCESS_KEY_ID",
 		"S3_SECRET_ACCESS_KEY",
 		"S3_MULTI_PART_SIZE",
+	}
+	DB_USER     = "DB_USER"
+	DB_PASSWORD = "DB_PASSWORD"
+	// maps container env key with db secret key
+	ContainerEnvKeys = map[string]string{
+		DB_USER:     "POSTGRES_USER",
+		DB_PASSWORD: "POSTGRES_PASSWORD",
 	}
 )
 
@@ -91,13 +106,26 @@ func (r *Reconciler) transform(ctx context.Context, manifest *mf.Manifest, comp 
 		updateApiEnv(instance.Spec),
 		enablePVCLogging(instance.Spec.ResultsAPIProperties),
 		updateEnvWithSecretName(instance.Spec.ResultsAPIProperties),
+		updateEnvWithDBSecretName(instance.Spec.ResultsAPIProperties),
 		populateGoogleCreds(instance.Spec.ResultsAPIProperties),
 		common.AddDeploymentRestrictedPSA(),
+		common.AddConfiguration(instance.Spec.Config),
 		common.AddStatefulSetRestrictedPSA(),
 		common.DeploymentImages(resultImgs),
 		common.DeploymentEnvVarKubernetesMinVersion(),
 		common.StatefulSetImages(resultImgs),
+		common.AddConfigMapValues(tektonResultleaderElectionConfig, instance.Spec.Performance.PerformanceLeaderElectionConfig),
+		common.UpdatePerformanceFlagsInDeploymentAndLeaderConfigMap(&instance.Spec.Performance, tektonResultleaderElectionConfig, resultWatcherDeployment, resultWatcherContainer),
+		// Note: PostgreSQL upgrade transformer is NOT needed for Kubernetes
 	}
+
+	if instance.Spec.Performance.StatefulsetOrdinals != nil && *instance.Spec.Performance.StatefulsetOrdinals {
+		extra = append(extra,
+			common.ConvertDeploymentToStatefulSet(tektonResultWatcherName, tektonResultWatcherServiceName),
+			common.AddStatefulEnvVars(tektonResultWatcherName, tektonResultWatcherServiceName, tektonResultWatcherStatefulServiceName, tektonResultWatcherStatefulControllerOrdinal),
+		)
+	}
+
 	extra = append(extra, r.extension.Transformers(instance)...)
 	err := common.Transform(ctx, manifest, instance, extra...)
 	if err != nil {
@@ -173,6 +201,7 @@ func enablePVCLogging(p v1alpha1.ResultsAPIProperties) mf.Transformer {
 
 func updateApiConfig(s v1alpha1.TektonResultSpec) mf.Transformer {
 	p := s.ResultsAPIProperties
+
 	return func(u *unstructured.Unstructured) error {
 
 		kind := strings.ToLower(u.GetKind())
@@ -552,6 +581,7 @@ func updateEnvWithSecretName(props v1alpha1.ResultsAPIProperties) mf.Transformer
 		u.SetUnstructuredContent(uObj)
 		return nil
 	}
+
 }
 
 func replaceEnv(envs []corev1.EnvVar, prop map[string]string) {
@@ -561,5 +591,88 @@ func replaceEnv(envs []corev1.EnvVar, prop map[string]string) {
 			envs[i].Name = prop[env.Name]
 			delete(prop, env.Name)
 		}
+	}
+}
+
+// update api and retention-policy-agent env secret reference with db secret key and name
+func updateEnvWithDBSecretName(props v1alpha1.ResultsAPIProperties) mf.Transformer {
+	return func(u *unstructured.Unstructured) error {
+		if props.DBSecretName == "" || u.GetKind() != "Deployment" || u.GetName() == resultWatcherDeployment {
+			return nil
+		}
+
+		dep := &appsv1.Deployment{}
+		err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(u.Object, dep)
+		if err != nil {
+			return err
+		}
+
+		// find the matching container and add env and secret name object
+		for containerIndex, container := range dep.Spec.Template.Spec.Containers {
+
+			// get existing env from the container
+			existingEnv := container.Env
+			if existingEnv == nil {
+				existingEnv = make([]corev1.EnvVar, 0)
+			}
+
+			// update the value of container keys with provided db secret key
+			if props.DBSecretUserKey != "" {
+				ContainerEnvKeys[DB_USER] = props.DBSecretUserKey
+			}
+			if props.DBSecretPasswordKey != "" {
+				ContainerEnvKeys[DB_PASSWORD] = props.DBSecretPasswordKey
+			}
+			for envKey, secretKey := range ContainerEnvKeys {
+				var newEnv corev1.EnvVar
+				if envKey == DB_USER {
+					newEnv = corev1.EnvVar{
+						Name: envKey,
+						ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: &corev1.SecretKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: props.DBSecretName,
+								},
+								Key: secretKey,
+							},
+						},
+					}
+				} else {
+					newEnv = corev1.EnvVar{
+						Name: envKey,
+						ValueFrom: &corev1.EnvVarSource{
+							SecretKeyRef: &corev1.SecretKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: props.DBSecretName,
+								},
+								Key: secretKey,
+							},
+						},
+					}
+				}
+				// if existing entry found, replace that
+				appendNewEnv := true
+				for existingIndex, _env := range existingEnv {
+					if _env.Name == envKey {
+						existingEnv[existingIndex] = newEnv
+						appendNewEnv = false
+						break
+					}
+				}
+				if appendNewEnv {
+					existingEnv = append(existingEnv, newEnv)
+				}
+			}
+			// update the changes into the actual container
+			dep.Spec.Template.Spec.Containers[containerIndex].Env = existingEnv
+			break
+		}
+
+		uObj, err := k8sruntime.DefaultUnstructuredConverter.ToUnstructured(dep)
+		if err != nil {
+			return err
+		}
+		u.SetUnstructuredContent(uObj)
+		return nil
 	}
 }

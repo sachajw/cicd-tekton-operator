@@ -19,6 +19,8 @@ package tektonresult
 import (
 	"context"
 
+	"github.com/tektoncd/operator/pkg/reconciler/kubernetes/tektoninstallerset/client"
+
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
 	operatorclient "github.com/tektoncd/operator/pkg/client/injection/client"
 	tektonInstallerinformer "github.com/tektoncd/operator/pkg/client/injection/informers/operator/v1alpha1/tektoninstallerset"
@@ -67,19 +69,24 @@ func NewExtendedController(generator common.ExtensionGenerator) injection.Contro
 			logger.Fatalw("Error starting Results metrics")
 		}
 
+		metricsWrapper := NewRecorderWrapper(recorder)
+
+		tisClient := operatorclient.Get(ctx).OperatorV1alpha1().TektonInstallerSets()
+
 		c := &Reconciler{
-			kubeClientSet:     kubeclient.Get(ctx),
-			operatorClientSet: operatorclient.Get(ctx),
-			extension:         generator(ctx),
-			manifest:          &manifest,
-			pipelineInformer:  tektonPipelineInformer.Get(ctx),
-			operatorVersion:   operatorVer,
-			resultsVersion:    resultsVer,
-			recorder:          recorder,
+			installerSetClient: client.NewInstallerSetClient(tisClient, operatorVer, resultsVer, v1alpha1.KindTektonResult, metricsWrapper),
+			kubeClientSet:      kubeclient.Get(ctx),
+			operatorClientSet:  operatorclient.Get(ctx),
+			extension:          generator(ctx),
+			manifest:           &manifest,
+			pipelineInformer:   tektonPipelineInformer.Get(ctx),
+			operatorVersion:    operatorVer,
+			resultsVersion:     resultsVer,
+			recorder:           recorder,
 		}
 		impl := tektonResultReconciler.NewImpl(ctx, c)
 
-		logger.Info("Setting up event handlers for tekton-results")
+		logger.Debug("Setting up event handlers for tekton-results")
 
 		if _, err := tektonResultInformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue)); err != nil {
 			logger.Panicf("Couldn't register TektonResult informer event handler: %w", err)

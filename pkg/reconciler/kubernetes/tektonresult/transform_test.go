@@ -17,19 +17,20 @@ limitations under the License.
 package tektonresult
 
 import (
-	"fmt"
 	"path"
-	"testing"
 
 	mf "github.com/manifestival/manifestival"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-
-	"gotest.tools/v3/assert"
-
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"fmt"
+	"testing"
+
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
+	"github.com/tektoncd/operator/pkg/reconciler/common"
+
+	"gotest.tools/v3/assert"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func Test_enablePVCLogging(t *testing.T) {
@@ -98,6 +99,7 @@ func Test_updateApiConfig(t *testing.T) {
 				LoggingPluginForwarderDelayDuration: &bufferDuration,
 				LoggingPluginQueryLimit:             &limit,
 				LoggingPluginQueryParams:            "direction=asc&skip=0",
+				LoggingPluginMultipartRegex:         `-%s`,
 			},
 		},
 	}
@@ -135,6 +137,7 @@ LOGS_BUFFER_SIZE=12345
 LOGS_PATH=/logs/test
 LOGGING_PLUGIN_QUERY_LIMIT=100
 LOGGING_PLUGIN_QUERY_PARAMS=direction=asc&skip=0
+LOGGING_PLUGIN_MULTIPART_REGEX=-%s
 STORAGE_EMULATOR_HOST=http://localhost:9004`)
 }
 
@@ -287,4 +290,104 @@ func TestUpdateAPIEnv(t *testing.T) {
 
 	}
 	assert.Equal(t, true, containerFound, "container not found")
+}
+
+func TestUpdateEnvWithDBSecretName(t *testing.T) {
+	testData := path.Join("testdata", "api-deployment.yaml")
+	manifest, err := mf.ManifestFrom(mf.Recursive(testData))
+	assert.NilError(t, err)
+
+	dbSecretName := "my_custom_secret"
+
+	deployment := &appsv1.Deployment{}
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(manifest.Resources()[0].Object, deployment)
+	assert.NilError(t, err)
+	prop := v1alpha1.ResultsAPIProperties{
+		DBSecretName:        dbSecretName,
+		DBSecretUserKey:     "user1",
+		DBSecretPasswordKey: "random-password",
+	}
+
+	manifest, err = manifest.Transform(updateEnvWithDBSecretName(prop))
+	assert.NilError(t, err)
+
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(manifest.Resources()[0].Object, deployment)
+	assert.NilError(t, err)
+
+	containerFound := false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name != apiContainerName {
+			continue
+		}
+		containerFound = true
+		// verify api container env reference custom db secret key and name
+		for envKeyName := range ContainerEnvKeys {
+			envFound := false
+			for _, _env := range container.Env {
+				if _env.Name == envKeyName {
+					envFound = true
+					assert.Equal(t, dbSecretName, _env.ValueFrom.SecretKeyRef.LocalObjectReference.Name)
+				}
+				if _env.Name == DB_USER {
+					assert.Equal(t, "user1", _env.ValueFrom.SecretKeyRef.Key)
+				}
+				if _env.Name == DB_PASSWORD {
+					assert.Equal(t, "random-password", _env.ValueFrom.SecretKeyRef.Key)
+				}
+
+			}
+			assert.Equal(t, true, envFound, fmt.Sprintf("secret name %s not found in env:%s", dbSecretName, envKeyName))
+		}
+
+	}
+	assert.Equal(t, true, containerFound, "container not found")
+}
+
+func Test_AddConfiguration(t *testing.T) {
+	testData := path.Join("testdata", "api-deployment.yaml")
+	manifest, err := mf.ManifestFrom(mf.Recursive(testData))
+	assert.NilError(t, err)
+
+	deployment := &appsv1.Deployment{}
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(manifest.Resources()[0].Object, deployment)
+	assert.NilError(t, err)
+
+	prop := v1alpha1.TektonResultSpec{
+		Config: v1alpha1.Config{
+			NodeSelector: map[string]string{
+				"kubernetes.io/os": "linux",
+				"node-type":        "compute",
+			},
+			Tolerations: []corev1.Toleration{
+				{
+					Key:      "node.kubernetes.io/not-ready",
+					Operator: corev1.TolerationOpExists,
+					Effect:   corev1.TaintEffectNoExecute,
+				},
+			},
+			PriorityClassName: "system-cluster-critical",
+		},
+	}
+
+	// Apply the AddConfiguration transformer
+	manifest, err = manifest.Transform(common.AddConfiguration(prop.Config))
+	assert.NilError(t, err)
+
+	// Convert back to deployment to verify changes
+	err = runtime.DefaultUnstructuredConverter.FromUnstructured(manifest.Resources()[0].Object, deployment)
+	assert.NilError(t, err)
+
+	// Verify NodeSelector was applied
+	assert.Equal(t, len(deployment.Spec.Template.Spec.NodeSelector), 2)
+	assert.Equal(t, deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/os"], "linux")
+	assert.Equal(t, deployment.Spec.Template.Spec.NodeSelector["node-type"], "compute")
+
+	// Verify Tolerations were applied
+	assert.Equal(t, len(deployment.Spec.Template.Spec.Tolerations), 1)
+	assert.Equal(t, deployment.Spec.Template.Spec.Tolerations[0].Key, "node.kubernetes.io/not-ready")
+	assert.Equal(t, deployment.Spec.Template.Spec.Tolerations[0].Operator, corev1.TolerationOpExists)
+	assert.Equal(t, deployment.Spec.Template.Spec.Tolerations[0].Effect, corev1.TaintEffectNoExecute)
+
+	// Verify PriorityClassName was applied
+	assert.Equal(t, deployment.Spec.Template.Spec.PriorityClassName, "system-cluster-critical")
 }

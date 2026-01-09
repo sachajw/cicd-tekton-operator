@@ -25,7 +25,8 @@ import (
 )
 
 const (
-	VERSION = "0.15.2"
+	VERSION        = "0.15.2"
+	PRUNER_VERSION = "0.3.5"
 )
 
 func TestGetLatestRelease(t *testing.T) {
@@ -34,6 +35,9 @@ func TestGetLatestRelease(t *testing.T) {
 
 	version := latestRelease(&v1alpha1.TektonTrigger{})
 	util.AssertEqual(t, version, VERSION)
+
+	prunerVersion := latestRelease(&v1alpha1.TektonPruner{})
+	util.AssertEqual(t, prunerVersion, PRUNER_VERSION)
 }
 
 func TestListReleases(t *testing.T) {
@@ -44,6 +48,12 @@ func TestListReleases(t *testing.T) {
 	version, err := allReleases(&v1alpha1.TektonTrigger{})
 	util.AssertEqual(t, err, nil)
 	util.AssertDeepEqual(t, version, expectedVersionList)
+
+	// Pruner Versions
+	expectedPrunerVersions := []string{"0.3.5", "0.3.4", "0.3.3", "0.1.0"}
+	version, err = allReleases(&v1alpha1.TektonPruner{})
+	util.AssertEqual(t, err, nil)
+	util.AssertDeepEqual(t, version, expectedPrunerVersions)
 }
 
 func TestAppendManifest(t *testing.T) {
@@ -67,6 +77,34 @@ func TestAppendManifest(t *testing.T) {
 	}
 
 	if len(newManifest.Resources()) != 1 {
-		t.Fatalf("failed to find expected number of resource: %d found, expected 3", len(newManifest.Resources()))
+		t.Fatalf("failed to find expected number of resource: %d found, expected 1", len(newManifest.Resources()))
 	}
+}
+
+func TestFetchAndFetchRecursive(t *testing.T) {
+	// Set up test environment
+	koPath := "testdata/kodata"
+	t.Setenv(KoEnvKey, koPath)
+
+	// Test Fetch not recursive
+	t.Run("Fetch should return manifest from path", func(t *testing.T) {
+		manifest, err := Fetch("testdata/kodata/tekton-addon")
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		if len(manifest.Resources()) != 1 {
+			t.Fatalf("expected 1 resource, got %d", len(manifest.Resources()))
+		}
+	})
+
+	// Test FetchRecursive
+	t.Run("FetchRecursive should return manifest from path recursively", func(t *testing.T) {
+		manifest, err := FetchRecursive("testdata/kodata/tekton-addon")
+		if err != nil {
+			t.Fatalf("FetchRecursive failed: %v", err)
+		}
+		if len(manifest.Resources()) != 3 {
+			t.Fatalf("expected 3 resources, got %d", len(manifest.Resources()))
+		}
+	})
 }

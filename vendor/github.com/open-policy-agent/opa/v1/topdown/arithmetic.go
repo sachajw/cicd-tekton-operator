@@ -5,7 +5,7 @@
 package topdown
 
 import (
-	"fmt"
+	"errors"
 	"math/big"
 
 	"github.com/open-policy-agent/opa/v1/ast"
@@ -70,10 +70,8 @@ func builtinPlus(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) er
 		return iter(ast.InternedIntNumberTerm(x + y))
 	}
 
-	f, err := arithPlus(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
-	if err != nil {
-		return err
-	}
+	f := new(big.Float).Add(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
+
 	return iter(ast.NewTerm(builtins.FloatToNumber(f)))
 }
 
@@ -94,36 +92,22 @@ func builtinMultiply(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term
 		return iter(ast.InternedIntNumberTerm(x * y))
 	}
 
-	f, err := arithMultiply(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
-	if err != nil {
-		return err
-	}
+	f := new(big.Float).Mul(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
+
 	return iter(ast.NewTerm(builtins.FloatToNumber(f)))
-}
-
-func arithPlus(a, b *big.Float) (*big.Float, error) {
-	return new(big.Float).Add(a, b), nil
-}
-
-func arithMinus(a, b *big.Float) (*big.Float, error) {
-	return new(big.Float).Sub(a, b), nil
-}
-
-func arithMultiply(a, b *big.Float) (*big.Float, error) {
-	return new(big.Float).Mul(a, b), nil
 }
 
 func arithDivide(a, b *big.Float) (*big.Float, error) {
 	i, acc := b.Int64()
 	if acc == big.Exact && i == 0 {
-		return nil, fmt.Errorf("divide by zero")
+		return nil, errors.New("divide by zero")
 	}
 	return new(big.Float).Quo(a, b), nil
 }
 
 func arithRem(a, b *big.Int) (*big.Int, error) {
 	if b.Int64() == 0 {
-		return nil, fmt.Errorf("modulo by zero")
+		return nil, errors.New("modulo by zero")
 	}
 	return new(big.Int).Rem(a, b), nil
 }
@@ -174,10 +158,8 @@ func builtinMinus(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) e
 			return iter(ast.InternedIntNumberTerm(x - y))
 		}
 
-		f, err := arithMinus(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
-		if err != nil {
-			return err
-		}
+		f := new(big.Float).Sub(builtins.NumberToFloat(n1), builtins.NumberToFloat(n2))
+
 		return iter(ast.NewTerm(builtins.FloatToNumber(f)))
 	}
 
@@ -185,7 +167,11 @@ func builtinMinus(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) e
 	s2, ok4 := operands[1].Value.(ast.Set)
 
 	if ok3 && ok4 {
-		return iter(ast.NewTerm(s1.Diff(s2)))
+		diff := s1.Diff(s2)
+		if diff.Len() == 0 {
+			return iter(ast.InternedEmptySet)
+		}
+		return iter(ast.NewTerm(diff))
 	}
 
 	if !ok1 && !ok3 {
@@ -210,7 +196,7 @@ func builtinRem(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) err
 
 		if okx && oky && inSmallIntRange(x) && inSmallIntRange(y) {
 			if y == 0 {
-				return fmt.Errorf("modulo by zero")
+				return errors.New("modulo by zero")
 			}
 
 			return iter(ast.InternedIntNumberTerm(x % y))
@@ -220,7 +206,7 @@ func builtinRem(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) err
 		op2, err2 := builtins.NumberToInt(n2)
 
 		if err1 != nil || err2 != nil {
-			return fmt.Errorf("modulo on floating-point number")
+			return errors.New("modulo on floating-point number")
 		}
 
 		i, err := arithRem(op1, op2)

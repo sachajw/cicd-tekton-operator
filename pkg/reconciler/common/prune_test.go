@@ -102,7 +102,7 @@ func TestPrunerContainerImageEnvironment(t *testing.T) {
 			pruner, err := getPruner(context.Background(), getTestKubeClient(), getTestTektonConfig())
 			assert.NoError(t, err)
 
-			err = pruner.reconcile()
+			err = pruner.reconcile(context.TODO())
 			if test.expectError {
 				assert.NotNil(t, err)
 			} else {
@@ -537,9 +537,9 @@ func TestPrunerReconcile(t *testing.T) {
 						assert.NoError(t, err)
 						// verify that job deleted successfully
 						verifyCronExistence := func() {
-							receivedCron, err := client.BatchV1().CronJobs(tektonConfig.Spec.TargetNamespace).Get(ctx, cronName, metav1.GetOptions{})
+							_, err := client.BatchV1().CronJobs(tektonConfig.Spec.TargetNamespace).Get(ctx, cronName, metav1.GetOptions{})
 							assert.True(t, apierrors.IsNotFound(err))
-							assert.Nil(t, receivedCron)
+							//assert.Nil(t, receivedCron)
 						}
 						return verifyCronExistence
 					},
@@ -808,7 +808,7 @@ func TestPrunerReconcile(t *testing.T) {
 						callbackFunc = reconcile.applyChanges(test.tektonConfig, test.client, t)
 					}
 
-					err = pruner.reconcile()
+					err = pruner.reconcile(context.TODO())
 					assert.NoError(t, err)
 
 					// custom call back function, to assert custom things

@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	mf "github.com/manifestival/manifestival"
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
 	"go.uber.org/zap"
@@ -44,12 +46,14 @@ import (
 const (
 	AnnotationPreserveNS          = "operator.tekton.dev/preserve-namespace"
 	AnnotationPreserveRBSubjectNS = "operator.tekton.dev/preserve-rb-subject-namespace"
+	ImageRegistryOverride         = "TEKTON_REGISTRY_OVERRIDE"
 	PipelinesImagePrefix          = "IMAGE_PIPELINES_"
 	TriggersImagePrefix           = "IMAGE_TRIGGERS_"
 	AddonsImagePrefix             = "IMAGE_ADDONS_"
 	PacImagePrefix                = "IMAGE_PAC_"
 	ChainsImagePrefix             = "IMAGE_CHAINS_"
 	ManualApprovalGatePrefix      = "IMAGE_MAG_"
+	PrunerImagePrefix             = "IMAGE_PRUNER_"
 	ResultsImagePrefix            = "IMAGE_RESULTS_"
 	HubImagePrefix                = "IMAGE_HUB_"
 	DashboardImagePrefix          = "IMAGE_DASHBOARD_"
@@ -61,6 +65,7 @@ const (
 
 	runAsNonRootValue              = true
 	allowPrivilegedEscalationValue = false
+	pipelinesControllerDeployment  = "tekton-pipelines-controller"
 )
 
 // transformers that are common to all components.
@@ -71,6 +76,7 @@ func transformers(ctx context.Context, obj v1alpha1.TektonComponent) []mf.Transf
 		injectNamespaceCRDWebhookClientConfig(obj.GetSpec().GetTargetNamespace()),
 		injectNamespaceCRClusterInterceptorClientConfig(obj.GetSpec().GetTargetNamespace()),
 		injectNamespaceClusterRole(obj.GetSpec().GetTargetNamespace()),
+		ReplaceNamespaceInWebhookNamespaceSelector(obj.GetSpec().GetTargetNamespace()),
 		AddDeploymentRestrictedPSA(),
 	}
 }
@@ -175,6 +181,26 @@ func ImagesFromEnv(prefix string) map[string]string {
 	return images
 }
 
+// ImageRegistryDomainOverride will add or override the registry used in the image list
+func ImageRegistryDomainOverride(images map[string]string) map[string]string {
+	registry := os.Getenv(ImageRegistryOverride)
+	if registry == "" {
+		return images
+	} else {
+		for key, imageName := range images {
+			parts := strings.Split(imageName, "/")
+			if len(parts) > 1 {
+				// if image has registry part, replace it
+				images[key] = registry + "/" + strings.Join(parts[1:], "/")
+			} else {
+				// if image does not have registry part, add it
+				images[key] = registry + "/" + imageName
+			}
+		}
+		return images
+	}
+}
+
 // ToLowerCaseKeys converts key value to lower cases.
 func ToLowerCaseKeys(keyValues map[string]string) map[string]string {
 	newMap := map[string]string{}
@@ -202,6 +228,8 @@ func DeploymentImages(images map[string]string) mf.Transformer {
 
 		containers := d.Spec.Template.Spec.Containers
 		replaceContainerImages(containers, images)
+		initContainers := d.Spec.Template.Spec.InitContainers
+		replaceContainerImages(initContainers, images)
 
 		unstrObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(d)
 		if err != nil {
@@ -291,7 +319,6 @@ func replaceContainersArgsImage(container *corev1.Container, images map[string]s
 			container.Args[a+1] = url
 		}
 	}
-
 }
 
 func formKey(prefix, arg string) string {
@@ -628,6 +655,13 @@ func AddConfigMapValues(configMapName string, prop interface{}) mf.Transformer {
 
 			case reflect.String:
 				_value = element.String()
+
+			case reflect.Struct:
+				out, err := yaml.Marshal(element.Interface())
+				if err != nil {
+					return fmt.Errorf("failed to marshal struct field %s: %v", key, err)
+				}
+				_value = string(out)
 			}
 
 			if _value != "" {
@@ -964,7 +998,6 @@ func ReplaceNamespace(newNamespace string) mf.Transformer {
 				return err
 			}
 			u.SetUnstructuredContent(obj)
-
 		}
 
 		return nil
@@ -1102,6 +1135,8 @@ func AddStatefulEnvVars(controllerName, serviceName, statefulServiceEnvVar, cont
 }
 
 // updates performance flags/args into deployment and container given as args
+// and leader election config as pod labels into a Deployment, ensuring that any changes trigger a rollout.
+// It also updates the replica count if specified in the performanceSpec.
 func UpdatePerformanceFlagsInDeploymentAndLeaderConfigMap(performanceSpec *v1alpha1.PerformanceProperties, leaderConfig, deploymentName, containerName string) mf.Transformer {
 	return func(u *unstructured.Unstructured) error {
 		if u.GetKind() != "Deployment" || u.GetName() != deploymentName {
@@ -1172,7 +1207,8 @@ func UpdatePerformanceFlagsInDeploymentAndLeaderConfigMap(performanceSpec *v1alp
 
 				// skip deprecated disable-ha flag if not pipelinesControllerDeployment
 				// should be removed when the flag is removed from pipelines controller
-				if deploymentName != "tekton-pipelines-controller" && flagKey == "disable-ha" {
+				// we can use this logic incase we need to skip it for other controllers as well here
+				if deploymentName != pipelinesControllerDeployment && flagKey == "disable-ha" {
 					continue
 				}
 
@@ -1210,4 +1246,78 @@ func getSortedKeys(input map[string]interface{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// replaces the namespace in ValidatingWebhookConfiguration namespaceSelector
+func ReplaceNamespaceInWebhookNamespaceSelector(targetNamespace string) mf.Transformer {
+	return func(u *unstructured.Unstructured) error {
+		if !strings.EqualFold(u.GetKind(), "ValidatingWebhookConfiguration") {
+			return nil
+		}
+		// Accept either spec.webhooks (some older patterns) or top-level webhooks (current API structure).
+		webhooks, foundSpec, errSpec := unstructured.NestedSlice(u.Object, "spec", "webhooks")
+		pathIsSpec := true
+		if errSpec != nil || !foundSpec {
+			// Fallback to top-level
+			webhooksTop, foundTop, errTop := unstructured.NestedSlice(u.Object, "webhooks")
+			if errTop != nil || !foundTop {
+				// Nothing to transform
+				return nil
+			}
+			webhooks = webhooksTop
+			pathIsSpec = false
+		}
+		changed := false
+		for i := range webhooks {
+			wh, ok := webhooks[i].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			nsSel, okNs := wh["namespaceSelector"].(map[string]interface{})
+			if !okNs {
+				continue
+			}
+			matchExprs, okExpr := nsSel["matchExpressions"].([]interface{})
+			if !okExpr {
+				continue
+			}
+			for j := range matchExprs {
+				expr, ok := matchExprs[j].(map[string]interface{})
+				if !ok {
+					continue
+				}
+				values, okVals := expr["values"].([]interface{})
+				if !okVals || len(values) == 0 {
+					continue
+				}
+				for k := range values {
+					valStr, ok := values[k].(string)
+					if !ok || targetNamespace == "" {
+						continue
+					}
+					if strings.Contains(valStr, DefaultTargetNamespace) {
+						newVal := strings.ReplaceAll(valStr, DefaultTargetNamespace, targetNamespace)
+						if newVal != valStr {
+							values[k] = newVal
+							changed = true
+						}
+					}
+				}
+				expr["values"] = values
+				matchExprs[j] = expr
+			}
+			nsSel["matchExpressions"] = matchExprs
+			wh["namespaceSelector"] = nsSel
+			webhooks[i] = wh
+		}
+		if changed {
+			if pathIsSpec {
+				_ = unstructured.SetNestedSlice(u.Object, webhooks, "spec", "webhooks")
+			} else {
+				// Top-level assignment
+				u.Object["webhooks"] = webhooks
+			}
+		}
+		return nil
+	}
 }

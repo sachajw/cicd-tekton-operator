@@ -94,7 +94,9 @@ func (ctrl Controller) fetchSourceManifests(ctx context.Context, opts PayloadOpt
 		if err := AppendTarget(ctx, ctrl.Manifest, pipeline); err != nil {
 			return err
 		}
-		// add proxy configs to pipeline if any
+		if strings.EqualFold(os.Getenv("DISABLE_PROXY_WEBHOOK"), "true") {
+			return nil
+		}
 		return addProxy(ctrl.Manifest)
 	case "triggers":
 		var trigger *v1alpha1.TektonTrigger
@@ -121,6 +123,9 @@ func (ctrl Controller) fetchSourceManifests(ctx context.Context, opts PayloadOpt
 	case "manual-approval-gate":
 		var mag v1alpha1.ManualApprovalGate
 		return AppendTarget(ctx, ctrl.Manifest, &mag)
+	case v1alpha1.TektonPrunerResourceName:
+		var pruner v1alpha1.TektonPruner
+		return AppendTarget(ctx, ctrl.Manifest, &pruner)
 	}
 
 	return nil

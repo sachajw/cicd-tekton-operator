@@ -37,6 +37,9 @@ const (
 	monitoringLabelKey = "openshift.io/cluster-monitoring"
 	enableMetricsKey   = "enableMetrics"
 	versionKey         = "VERSION"
+
+	tektonPipelinesControllerName       = "tekton-pipelines-controller"
+	tektonRemoteResolversControllerName = "tekton-pipelines-remote-resolvers"
 )
 
 func OpenShiftExtension(ctx context.Context) common.Extension {
@@ -63,8 +66,12 @@ type openshiftExtension struct {
 
 func (oe openshiftExtension) Transformers(comp v1alpha1.TektonComponent) []mf.Transformer {
 	trns := []mf.Transformer{
-		occommon.ApplyCABundles,
+		occommon.ApplyCABundlesToDeployment,
 		occommon.RemoveRunAsUser(),
+		occommon.RemoveRunAsUserForStatefulSet(tektonPipelinesControllerName),
+		occommon.RemoveRunAsUserForStatefulSet(tektonRemoteResolversControllerName),
+		occommon.ApplyCABundlesForStatefulSet(tektonPipelinesControllerName),
+		occommon.ApplyCABundlesForStatefulSet(tektonRemoteResolversControllerName),
 	}
 	return trns
 }

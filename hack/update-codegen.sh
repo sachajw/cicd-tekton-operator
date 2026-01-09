@@ -18,11 +18,8 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-source $(git rev-parse --show-toplevel)/hack/setup-temporary-gopath.sh
-shim_gopath
-trap shim_gopath_clean EXIT
-
-source $(git rev-parse --show-toplevel)/vendor/github.com/tektoncd/plumbing/scripts/library.sh
+source $(git rev-parse --show-toplevel)/vendor/knative.dev/hack/codegen-library.sh
+source "${CODEGEN_PKG}/kube_codegen.sh"
 
 PREFIX=${GOBIN:-${GOPATH}/bin}
 
@@ -40,13 +37,13 @@ bash ${REPO_ROOT_DIR}/hack/generate-groups.sh "deepcopy,client,informer,lister" 
 
 # Depends on generate-groups.sh to install bin/deepcopy-gen
 ${PREFIX}/deepcopy-gen \
-  -O zz_generated.deepcopy \
+  --output-file zz_generated.deepcopy.go \
   --go-header-file ${REPO_ROOT_DIR}/hack/boilerplate/boilerplate.go.txt \
-  -i github.com/tektoncd/operator/pkg/apis/operator/v1alpha1
+  github.com/tektoncd/operator/pkg/apis/operator/v1alpha1
 
 # Knative Injection
 # This generates the knative inject packages for the operator package (v1alpha1).
-bash ${REPO_ROOT_DIR}/hack/generate-knative.sh "injection" \
+${REPO_ROOT_DIR}/vendor/knative.dev/pkg/hack/generate-knative.sh "injection" \
   github.com/tektoncd/operator/pkg/client github.com/tektoncd/operator/pkg/apis \
   "operator:v1alpha1" \
   --go-header-file ${REPO_ROOT_DIR}/hack/boilerplate/boilerplate.go.txt

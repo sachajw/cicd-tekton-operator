@@ -6,17 +6,28 @@ import (
 	"time"
 )
 
-// GroupSSHCertificatesService handles communication with the group
-// SSH certificate related methods of the GitLab API.
-//
-// GitLab API docs: https://docs.gitlab.com/ee/api/group_ssh_certificates.html
-type GroupSSHCertificatesService struct {
-	client *Client
-}
+type (
+	// GroupSSHCertificatesServiceInterface defines methods for the GroupSSHCertificatesService.
+	GroupSSHCertificatesServiceInterface interface {
+		ListGroupSSHCertificates(gid any, options ...RequestOptionFunc) ([]*GroupSSHCertificate, *Response, error)
+		CreateGroupSSHCertificate(gid any, opt *CreateGroupSSHCertificateOptions, options ...RequestOptionFunc) (*GroupSSHCertificate, *Response, error)
+		DeleteGroupSSHCertificate(gid any, cert int, options ...RequestOptionFunc) (*Response, error)
+	}
+
+	// GroupSSHCertificatesService handles communication with the group
+	// SSH certificate related methods of the GitLab API.
+	//
+	// GitLab API docs: https://docs.gitlab.com/api/group_ssh_certificates/
+	GroupSSHCertificatesService struct {
+		client *Client
+	}
+)
+
+var _ GroupSSHCertificatesServiceInterface = (*GroupSSHCertificatesService)(nil)
 
 // GroupSSHCertificate represents a GitLab Group SSH certificate.
 //
-// GitLab API docs: https://docs.gitlab.com/ee/api/member_roles.html
+// GitLab API docs: https://docs.gitlab.com/api/group_ssh_certificates/
 type GroupSSHCertificate struct {
 	ID        int        `json:"id"`
 	Title     string     `json:"title"`
@@ -28,8 +39,8 @@ type GroupSSHCertificate struct {
 // group.
 //
 // Gitlab API docs:
-// https://docs.gitlab.com/ee/api/group_ssh_certificates.html#get-all-ssh-certificates-for-a-particular-group
-func (s *GroupSSHCertificatesService) ListGroupSSHCertificates(gid interface{}, options ...RequestOptionFunc) ([]*GroupSSHCertificate, *Response, error) {
+// https://docs.gitlab.com/api/group_ssh_certificates/#get-all-ssh-certificates-for-a-particular-group
+func (s *GroupSSHCertificatesService) ListGroupSSHCertificates(gid any, options ...RequestOptionFunc) ([]*GroupSSHCertificate, *Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, nil, err
@@ -54,17 +65,17 @@ func (s *GroupSSHCertificatesService) ListGroupSSHCertificates(gid interface{}, 
 // CreateGroupSSHCertificate() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/group_ssh_certificates.html#create-ssh-certificate
+// https://docs.gitlab.com/api/group_ssh_certificates/#create-ssh-certificate
 type CreateGroupSSHCertificateOptions struct {
 	Key   *string `url:"key,omitempty" json:"key,omitempty"`
 	Title *string `url:"title,omitempty" json:"title,omitempty"`
 }
 
-// CreateMemberRole creates a new member role for a specified group.
+// CreateGroupSSHCertificate creates a new SSH certificate in the group.
 //
 // Gitlab API docs:
-// https://docs.gitlab.com/ee/api/group_ssh_certificates.html#create-ssh-certificate
-func (s *GroupSSHCertificatesService) CreateGroupSSHCertificate(gid interface{}, opt *CreateGroupSSHCertificateOptions, options ...RequestOptionFunc) (*GroupSSHCertificate, *Response, error) {
+// https://docs.gitlab.com/api/group_ssh_certificates/#create-ssh-certificate
+func (s *GroupSSHCertificatesService) CreateGroupSSHCertificate(gid any, opt *CreateGroupSSHCertificateOptions, options ...RequestOptionFunc) (*GroupSSHCertificate, *Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, nil, err
@@ -88,8 +99,8 @@ func (s *GroupSSHCertificatesService) CreateGroupSSHCertificate(gid interface{},
 // DeleteGroupSSHCertificate deletes a SSH certificate from a specified group.
 //
 // Gitlab API docs:
-// https://docs.gitlab.com/ee/api/group_ssh_certificates.html#delete-group-ssh-certificate
-func (s *GroupSSHCertificatesService) DeleteGroupSSHCertificate(gid interface{}, cert int, options ...RequestOptionFunc) (*Response, error) {
+// https://docs.gitlab.com/api/group_ssh_certificates/#delete-group-ssh-certificate
+func (s *GroupSSHCertificatesService) DeleteGroupSSHCertificate(gid any, cert int, options ...RequestOptionFunc) (*Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, err

@@ -19,6 +19,7 @@ package common
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	mf "github.com/manifestival/manifestival"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -27,11 +28,11 @@ import (
 type VersionError error
 
 var (
-	configMapError VersionError = fmt.Errorf("version information could not be determined from ConfigMap")
+	errConfigMap VersionError = fmt.Errorf("version information could not be determined from ConfigMap")
 )
 
 func IsFetchVersionError(err error) bool {
-	return err == configMapError
+	return err == errConfigMap
 }
 
 // FetchVersionFromConfigMap finds the component version from the ConfigMap data field. It looks
@@ -41,7 +42,7 @@ func FetchVersionFromConfigMap(manifest mf.Manifest, configMapName string) (stri
 	configMaps := manifest.Filter(mf.ByKind("ConfigMap"), mf.ByName(configMapName))
 
 	if len(configMaps.Resources()) == 0 {
-		return "", configMapError
+		return "", errConfigMap
 	}
 
 	versionConfigMap := configMaps.Resources()[0]
@@ -52,7 +53,7 @@ func FetchVersionFromConfigMap(manifest mf.Manifest, configMapName string) (stri
 		return version, nil
 	}
 
-	return "", configMapError
+	return "", errConfigMap
 }
 
 // converts struct to map with json encoding
@@ -71,4 +72,19 @@ func SerializeLabelsToJSON(labels map[string]string) (string, error) {
 		return "", fmt.Errorf("failed to serialize labels to JSON: %v", err)
 	}
 	return string(bytes), nil
+}
+
+// AddOrReplaceInList appends newItem to the provided list. If the new item exists in the list then the original
+// copy of the item is removed from the list before the new copy is appended. The identityFunc parameter is used
+// to uniquely identify an item during comparison.
+func AddOrReplaceInList[T any, V comparable](items []T, newItem T, identityFunc func(T) V) []T {
+	newItemIdentity := identityFunc(newItem)
+	for i, item := range items {
+		itemIdentity := identityFunc(item)
+		if itemIdentity == newItemIdentity {
+			items = slices.Delete(items, i, i+1)
+			break
+		}
+	}
+	return append(items, newItem)
 }

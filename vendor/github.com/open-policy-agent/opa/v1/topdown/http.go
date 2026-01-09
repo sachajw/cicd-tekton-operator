@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -18,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -87,22 +89,13 @@ var cacheableHTTPStatusCodes = [...]int{
 }
 
 var (
-	codeTerm       = ast.StringTerm("code")
-	messageTerm    = ast.StringTerm("message")
-	statusCodeTerm = ast.StringTerm("status_code")
-	errorTerm      = ast.StringTerm("error")
-	methodTerm     = ast.StringTerm("method")
-	urlTerm        = ast.StringTerm("url")
-
 	httpSendNetworkErrTerm  = ast.StringTerm(HTTPSendNetworkErr)
 	httpSendInternalErrTerm = ast.StringTerm(HTTPSendInternalErr)
-)
 
-var (
 	allowedKeys                 = ast.NewSet()
 	keyCache                    = make(map[string]*ast.Term, len(allowedKeyNames))
 	cacheableCodes              = ast.NewSet()
-	requiredKeys                = ast.NewSet(methodTerm, urlTerm)
+	requiredKeys                = ast.NewSet(ast.InternedStringTerm("method"), ast.InternedStringTerm("url"))
 	httpSendLatencyMetricKey    = "rego_builtin_http_send"
 	httpSendInterQueryCacheHits = httpSendLatencyMetricKey + "_interquery_cache_hits"
 )
@@ -168,20 +161,20 @@ func generateRaiseErrorResult(err error) *ast.Term {
 	switch err.(type) {
 	case *url.Error:
 		errObj = ast.NewObject(
-			ast.Item(codeTerm, httpSendNetworkErrTerm),
-			ast.Item(messageTerm, ast.StringTerm(err.Error())),
+			ast.Item(ast.InternedStringTerm("code"), httpSendNetworkErrTerm),
+			ast.Item(ast.InternedStringTerm("message"), ast.StringTerm(err.Error())),
 		)
 	default:
 		errObj = ast.NewObject(
-			ast.Item(codeTerm, httpSendInternalErrTerm),
-			ast.Item(messageTerm, ast.StringTerm(err.Error())),
+			ast.Item(ast.InternedStringTerm("code"), httpSendInternalErrTerm),
+			ast.Item(ast.InternedStringTerm("message"), ast.StringTerm(err.Error())),
 		)
 	}
 
-	return ast.NewTerm(ast.NewObject(
-		ast.Item(statusCodeTerm, ast.InternedIntNumberTerm(0)),
-		ast.Item(errorTerm, ast.NewTerm(errObj)),
-	))
+	return ast.ObjectTerm(
+		ast.Item(ast.InternedStringTerm("status_code"), ast.InternedIntNumberTerm(0)),
+		ast.Item(ast.InternedStringTerm("error"), ast.NewTerm(errObj)),
+	)
 }
 
 func getHTTPResponse(bctx BuiltinContext, req ast.Object) (*ast.Term, error) {
@@ -241,7 +234,7 @@ func getKeyFromRequest(req ast.Object) (ast.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	var allHeaders map[string]interface{}
+	var allHeaders map[string]any
 	err = ast.As(allHeadersTerm.Value, &allHeaders)
 	if err != nil {
 		return nil, err
@@ -324,8 +317,8 @@ func validateHTTPRequestOperand(term *ast.Term, pos int) (ast.Object, error) {
 
 // canonicalizeHeaders returns a copy of the headers where the keys are in
 // canonical HTTP form.
-func canonicalizeHeaders(headers map[string]interface{}) map[string]interface{} {
-	canonicalized := map[string]interface{}{}
+func canonicalizeHeaders(headers map[string]any) map[string]any {
+	canonicalized := map[string]any{}
 
 	for k, v := range headers {
 		canonicalized[http.CanonicalHeaderKey(k)] = v
@@ -378,10 +371,8 @@ func verifyHost(bctx BuiltinContext, host string) error {
 		return nil
 	}
 
-	for _, allowed := range bctx.Capabilities.AllowNet {
-		if allowed == host {
-			return nil
-		}
+	if slices.Contains(bctx.Capabilities.AllowNet, host) {
+		return nil
 	}
 
 	return fmt.Errorf("unallowed host: %s", host)
@@ -419,7 +410,7 @@ func createHTTPRequest(bctx BuiltinContext, obj ast.Object) (*http.Request, *htt
 		enableRedirect, tlsInsecureSkipVerify bool
 		tlsUseSystemCerts                     *bool
 		tlsConfig                             tls.Config
-		customHeaders                         map[string]interface{}
+		customHeaders                         map[string]any
 	)
 
 	timeout := defaultHTTPRequestTimeout
@@ -517,9 +508,9 @@ func createHTTPRequest(bctx BuiltinContext, obj ast.Object) (*http.Request, *htt
 				return nil, nil, err
 			}
 			var ok bool
-			customHeaders, ok = headersValInterface.(map[string]interface{})
+			customHeaders, ok = headersValInterface.(map[string]any)
 			if !ok {
-				return nil, nil, fmt.Errorf("invalid type for headers key")
+				return nil, nil, errors.New("invalid type for headers key")
 			}
 		case "tls_insecure_skip_verify":
 			tlsInsecureSkipVerify, err = strconv.ParseBool(obj.Get(val).String())
@@ -606,7 +597,7 @@ func createHTTPRequest(bctx BuiltinContext, obj ast.Object) (*http.Request, *htt
 	}
 
 	if len(tlsCaCert) != 0 {
-		tlsCaCert = bytes.Replace(tlsCaCert, []byte("\\n"), []byte("\n"), -1)
+		tlsCaCert = bytes.ReplaceAll(tlsCaCert, []byte("\\n"), []byte("\n"))
 		pool, err := addCACertsFromBytes(tlsConfig.RootCAs, tlsCaCert)
 		if err != nil {
 			return nil, nil, err
@@ -780,28 +771,17 @@ type httpSendCacheEntry struct {
 
 // The httpSendCache is used for intra-query caching of http.send results.
 type httpSendCache struct {
-	entries *util.HashMap
+	entries *util.HasherMap[ast.Value, httpSendCacheEntry]
 }
 
 func newHTTPSendCache() *httpSendCache {
 	return &httpSendCache{
-		entries: util.NewHashMap(valueEq, valueHash),
+		entries: util.NewHasherMap[ast.Value, httpSendCacheEntry](ast.ValueEqual),
 	}
-}
-
-func valueHash(v util.T) int {
-	return ast.StringTerm(v.(ast.Value).String()).Hash()
-}
-
-func valueEq(a, b util.T) bool {
-	av := a.(ast.Value)
-	bv := b.(ast.Value)
-	return av.String() == bv.String()
 }
 
 func (cache *httpSendCache) get(k ast.Value) *httpSendCacheEntry {
 	if v, ok := cache.entries.Get(k); ok {
-		v := v.(httpSendCacheEntry)
 		return &v
 	}
 	return nil
@@ -990,7 +970,7 @@ func insertIntoHTTPSendInterQueryCache(bctx BuiltinContext, key ast.Value, resp 
 
 	obj, ok := key.(ast.Object)
 	if !ok {
-		return fmt.Errorf("interface conversion error")
+		return errors.New("interface conversion error")
 	}
 
 	cachingMode, err := getCachingMode(obj)
@@ -1207,7 +1187,7 @@ func (c *interQueryCacheData) toCacheValue() (*interQueryCacheValue, error) {
 	return &interQueryCacheValue{Data: b}, nil
 }
 
-func (c *interQueryCacheData) SizeInBytes() int64 {
+func (*interQueryCacheData) SizeInBytes() int64 {
 	return 0
 }
 
@@ -1336,7 +1316,7 @@ func parseCacheControlHeader(headers http.Header) map[string]string {
 func getResponseHeaderDate(headers http.Header) (date time.Time, err error) {
 	dateHeader := headers.Get("date")
 	if dateHeader == "" {
-		err = fmt.Errorf("no date header")
+		err = errors.New("no date header")
 		return
 	}
 	return http.ParseTime(dateHeader)
@@ -1397,7 +1377,7 @@ func formatHTTPResponseToAST(resp *http.Response, forceJSONDecode, forceYAMLDeco
 }
 
 func prepareASTResult(headers http.Header, forceJSONDecode, forceYAMLDecode bool, body []byte, status string, statusCode int) (ast.Value, error) {
-	var resultBody interface{}
+	var resultBody any
 
 	// If the response body cannot be JSON/YAML decoded,
 	// an error will not be returned. Instead, the "body" field
@@ -1409,7 +1389,7 @@ func prepareASTResult(headers http.Header, forceJSONDecode, forceYAMLDecode bool
 		_ = util.Unmarshal(body, &resultBody)
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 	result["status"] = status
 	result["status_code"] = statusCode
 	result["body"] = resultBody
@@ -1424,10 +1404,10 @@ func prepareASTResult(headers http.Header, forceJSONDecode, forceYAMLDecode bool
 	return resultObj, nil
 }
 
-func getResponseHeaders(headers http.Header) map[string]interface{} {
-	respHeaders := map[string]interface{}{}
+func getResponseHeaders(headers http.Header) map[string]any {
+	respHeaders := map[string]any{}
 	for headerName, values := range headers {
-		var respValues []interface{}
+		var respValues []any
 		for _, v := range values {
 			respValues = append(respValues, v)
 		}
@@ -1614,7 +1594,7 @@ type forceCacheParams struct {
 func newForceCacheParams(req ast.Object) (*forceCacheParams, error) {
 	term := req.Get(keyCache["force_cache_duration_seconds"])
 	if term == nil {
-		return nil, fmt.Errorf("'force_cache' set but 'force_cache_duration_seconds' parameter is missing")
+		return nil, errors.New("'force_cache' set but 'force_cache_duration_seconds' parameter is missing")
 	}
 
 	forceCacheDurationSeconds := term.String()
@@ -1632,7 +1612,7 @@ func getRaiseErrorValue(req ast.Object) (bool, error) {
 	var ok bool
 	if v := req.Get(keyCache["raise_error"]); v != nil {
 		if result, ok = v.Value.(ast.Boolean); !ok {
-			return false, fmt.Errorf("invalid value for raise_error field")
+			return false, errors.New("invalid value for raise_error field")
 		}
 	}
 	return bool(result), nil

@@ -25,10 +25,9 @@ import (
 
 const (
 	// openshift specific
-	enableMetricsKey                         = "enableMetrics"
-	enableMetricsDefaultValue                = "true"
-	openshiftDefaultDisableAffinityAssistant = true
-	ospDefaultSA                             = "pipeline"
+	enableMetricsKey          = "enableMetrics"
+	enableMetricsDefaultValue = "true"
+	ospDefaultSA              = "pipeline"
 )
 
 func (tp *TektonPipeline) SetDefaults(ctx context.Context) {
@@ -80,6 +79,10 @@ func (p *Pipeline) setDefaults() {
 	// Deprecated: set to nil, remove in further release
 	p.ScopeWhenExpressionsToTask = nil
 
+	// Deprecated: disable-affinity-assistant is removed from pipeline component
+	// set to nil, remove in release-v0.80.x
+	p.DisableAffinityAssistant = nil
+
 	if p.EnforceNonfalsifiability == "" {
 		p.EnforceNonfalsifiability = config.DefaultEnforceNonfalsifiability
 	}
@@ -109,7 +112,7 @@ func (p *Pipeline) setDefaults() {
 	}
 
 	if p.EnableStepActions == nil {
-		p.EnableStepActions = ptr.Bool(config.DefaultEnableStepActions.Enabled)
+		p.EnableStepActions = ptr.Bool(config.DefaultFeatureFlags.EnableStepActions)
 	}
 
 	if p.EnableParamEnum == nil {
@@ -168,10 +171,6 @@ func (p *Pipeline) setDefaults() {
 func (p *Pipeline) openshiftDefaulting() {
 	if p.DefaultServiceAccount == "" {
 		p.DefaultServiceAccount = ospDefaultSA
-	}
-
-	if p.DisableAffinityAssistant == nil {
-		p.DisableAffinityAssistant = ptr.Bool(openshiftDefaultDisableAffinityAssistant)
 	}
 
 	// Add params with default values if not defined by user

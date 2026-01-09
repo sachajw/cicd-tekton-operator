@@ -8,7 +8,9 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -48,6 +50,8 @@ func NewNull() Null {
 	return Null{}
 }
 
+var Nl Type = NewNull()
+
 // NamedType represents a type alias with an arbitrary name and description.
 // This is useful for generating documentation for built-in functions.
 type NamedType struct {
@@ -58,12 +62,12 @@ type NamedType struct {
 func (n *NamedType) typeMarker() string { return n.Type.typeMarker() }
 func (n *NamedType) String() string     { return n.Name + ": " + n.Type.String() }
 func (n *NamedType) MarshalJSON() ([]byte, error) {
-	var obj map[string]interface{}
+	var obj map[string]any
 	switch x := n.Type.(type) {
-	case interface{ toMap() map[string]interface{} }:
+	case interface{ toMap() map[string]any }:
 		obj = x.toMap()
 	default:
-		obj = map[string]interface{}{
+		obj = map[string]any{
 			"type": n.Type.typeMarker(),
 		}
 	}
@@ -91,7 +95,7 @@ func Named(name string, t Type) *NamedType {
 
 // MarshalJSON returns the JSON encoding of t.
 func (t Null) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"type": t.typeMarker(),
 	})
 }
@@ -105,7 +109,7 @@ func unwrap(t Type) Type {
 	}
 }
 
-func (t Null) String() string {
+func (Null) String() string {
 	return typeNull
 }
 
@@ -113,7 +117,7 @@ func (t Null) String() string {
 type Boolean struct{}
 
 // B represents an instance of the boolean type.
-var B = NewBoolean()
+var B Type = NewBoolean()
 
 // NewBoolean returns a new Boolean type.
 func NewBoolean() Boolean {
@@ -122,7 +126,7 @@ func NewBoolean() Boolean {
 
 // MarshalJSON returns the JSON encoding of t.
 func (t Boolean) MarshalJSON() ([]byte, error) {
-	repr := map[string]interface{}{
+	repr := map[string]any{
 		"type": t.typeMarker(),
 	}
 	return json.Marshal(repr)
@@ -136,7 +140,7 @@ func (t Boolean) String() string {
 type String struct{}
 
 // S represents an instance of the string type.
-var S = NewString()
+var S Type = NewString()
 
 // NewString returns a new String type.
 func NewString() String {
@@ -145,7 +149,7 @@ func NewString() String {
 
 // MarshalJSON returns the JSON encoding of t.
 func (t String) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"type": t.typeMarker(),
 	})
 }
@@ -158,7 +162,7 @@ func (String) String() string {
 type Number struct{}
 
 // N represents an instance of the number type.
-var N = NewNumber()
+var N Type = NewNumber()
 
 // NewNumber returns a new Number type.
 func NewNumber() Number {
@@ -167,7 +171,7 @@ func NewNumber() Number {
 
 // MarshalJSON returns the JSON encoding of t.
 func (t Number) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"type": t.typeMarker(),
 	})
 }
@@ -195,8 +199,8 @@ func (t *Array) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.toMap())
 }
 
-func (t *Array) toMap() map[string]interface{} {
-	repr := map[string]interface{}{
+func (t *Array) toMap() map[string]any {
+	repr := map[string]any{
 		"type": t.typeMarker(),
 	}
 	if len(t.static) != 0 {
@@ -252,6 +256,13 @@ type Set struct {
 	of Type
 }
 
+// Boxed set types.
+var (
+	SetOfAny Type = NewSet(A)
+	SetOfStr Type = NewSet(S)
+	SetOfNum Type = NewSet(N)
+)
+
 // NewSet returns a new Set type.
 func NewSet(of Type) *Set {
 	return &Set{
@@ -268,8 +279,8 @@ func (t *Set) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.toMap())
 }
 
-func (t *Set) toMap() map[string]interface{} {
-	repr := map[string]interface{}{
+func (t *Set) toMap() map[string]any {
+	repr := map[string]any{
 		"type": t.typeMarker(),
 	}
 	if t.of != nil {
@@ -285,12 +296,12 @@ func (t *Set) String() string {
 
 // StaticProperty represents a static object property.
 type StaticProperty struct {
-	Key   interface{}
+	Key   any
 	Value Type
 }
 
 // NewStaticProperty returns a new StaticProperty object.
-func NewStaticProperty(key interface{}, value Type) *StaticProperty {
+func NewStaticProperty(key any, value Type) *StaticProperty {
 	return &StaticProperty{
 		Key:   key,
 		Value: value,
@@ -299,7 +310,7 @@ func NewStaticProperty(key interface{}, value Type) *StaticProperty {
 
 // MarshalJSON returns the JSON encoding of p.
 func (p *StaticProperty) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"key":   p.Key,
 		"value": p.Value,
 	})
@@ -321,7 +332,7 @@ func NewDynamicProperty(key, value Type) *DynamicProperty {
 
 // MarshalJSON returns the JSON encoding of p.
 func (p *DynamicProperty) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"key":   p.Key,
 		"value": p.Value,
 	})
@@ -339,9 +350,8 @@ type Object struct {
 
 // NewObject returns a new Object type.
 func NewObject(static []*StaticProperty, dynamic *DynamicProperty) *Object {
-	sort.Slice(static, func(i, j int) bool {
-		cmp := util.Compare(static[i].Key, static[j].Key)
-		return cmp == -1
+	slices.SortFunc(static, func(a, b *StaticProperty) int {
+		return util.Compare(a.Key, b.Key)
 	})
 	return &Object{
 		static:  static,
@@ -384,8 +394,8 @@ func (t *Object) StaticProperties() []*StaticProperty {
 }
 
 // Keys returns the keys of the object's static elements.
-func (t *Object) Keys() []interface{} {
-	sl := make([]interface{}, 0, len(t.static))
+func (t *Object) Keys() []any {
+	sl := make([]any, 0, len(t.static))
 	for _, p := range t.static {
 		sl = append(sl, p.Key)
 	}
@@ -397,8 +407,8 @@ func (t *Object) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.toMap())
 }
 
-func (t *Object) toMap() map[string]interface{} {
-	repr := map[string]interface{}{
+func (t *Object) toMap() map[string]any {
+	repr := map[string]any{
 		"type": t.typeMarker(),
 	}
 	if len(t.static) != 0 {
@@ -411,7 +421,7 @@ func (t *Object) toMap() map[string]interface{} {
 }
 
 // Select returns the type of the named property.
-func (t *Object) Select(name interface{}) Type {
+func (t *Object) Select(name any) Type {
 	pos := sort.Search(len(t.static), func(x int) bool {
 		return util.Compare(t.static[x].Key, name) >= 0
 	})
@@ -471,7 +481,7 @@ func mergeObjects(a, b *Object) *Object {
 		dynamicProps = b.dynamic
 	}
 
-	staticPropsMap := make(map[interface{}]Type)
+	staticPropsMap := make(map[any]Type)
 
 	for _, sp := range a.static {
 		staticPropsMap[sp.Key] = sp.Value
@@ -504,7 +514,7 @@ func mergeObjects(a, b *Object) *Object {
 type Any []Type
 
 // A represents the superset of all types.
-var A = NewAny()
+var A Type = NewAny()
 
 // NewAny returns a new Any type.
 func NewAny(of ...Type) Any {
@@ -536,8 +546,8 @@ func (t Any) MarshalJSON() ([]byte, error) {
 	return json.Marshal(t.toMap())
 }
 
-func (t Any) toMap() map[string]interface{} {
-	repr := map[string]interface{}{
+func (t Any) toMap() map[string]any {
+	repr := map[string]any{
 		"type": t.typeMarker(),
 	}
 	if len(t) != 0 {
@@ -578,10 +588,7 @@ func (t Any) Union(other Any) Any {
 		return other
 	}
 	// Prealloc the output list.
-	maxLen := lenT
-	if lenT < lenOther {
-		maxLen = lenOther
-	}
+	maxLen := max(lenT, lenOther)
 	merged := make(Any, 0, maxLen)
 	// Note(philipc): Create a merged slice, doing the minimum number of
 	// comparisons along the way. We treat this as a problem of merging two
@@ -744,7 +751,7 @@ func (t *Function) String() string {
 
 // MarshalJSON returns the JSON encoding of t.
 func (t *Function) MarshalJSON() ([]byte, error) {
-	repr := map[string]interface{}{
+	repr := map[string]any{
 		"type": t.typeMarker(),
 	}
 	if len(t.args) > 0 {
@@ -768,7 +775,7 @@ func (t *Function) UnmarshalJSON(bs []byte) error {
 
 	f, ok := tpe.(*Function)
 	if !ok {
-		return fmt.Errorf("invalid type")
+		return errors.New("invalid type")
 	}
 
 	*t = *f
@@ -850,7 +857,7 @@ func Compare(a, b Type) int {
 	} else if x < y {
 		return -1
 	}
-	switch a.(type) {
+	switch a.(type) { //nolint:gocritic
 	case nil, Null, Boolean, Number, String:
 		return 0
 	case *Array:
@@ -887,12 +894,9 @@ func Compare(a, b Type) int {
 		lenStaticA := len(objA.static)
 		lenStaticB := len(objB.static)
 
-		minLen := lenStaticA
-		if lenStaticB < minLen {
-			minLen = lenStaticB
-		}
+		minLen := min(lenStaticB, lenStaticA)
 
-		for i := 0; i < minLen; i++ {
+		for i := range minLen {
 			if cmp := util.Compare(objA.static[i].Key, objB.static[i].Key); cmp != 0 {
 				return cmp
 			}
@@ -931,7 +935,7 @@ func Compare(a, b Type) int {
 		} else if len(fA.args) > len(fB.args) {
 			return 1
 		}
-		for i := 0; i < len(fA.args); i++ {
+		for i := range len(fA.args) {
 			if cmp := Compare(fA.args[i], fB.args[i]); cmp != 0 {
 				return cmp
 			}
@@ -984,7 +988,7 @@ func Or(a, b Type) Type {
 }
 
 // Select returns a property or item of a.
-func Select(a Type, x interface{}) Type {
+func Select(a Type, x any) Type {
 	switch a := unwrap(a).(type) {
 	case *Array:
 		n, ok := x.(json.Number)
@@ -1095,17 +1099,13 @@ func Nil(a Type) bool {
 	case nil:
 		return true
 	case *Function:
-		for i := range a.args {
-			if Nil(a.args[i]) {
-				return true
-			}
+		if slices.ContainsFunc(a.args, Nil) {
+			return true
 		}
 		return Nil(a.result)
 	case *Array:
-		for i := range a.static {
-			if Nil(a.static[i]) {
-				return true
-			}
+		if slices.ContainsFunc(a.static, Nil) {
+			return true
 		}
 		if a.dynamic != nil {
 			return Nil(a.dynamic)
@@ -1126,32 +1126,32 @@ func Nil(a Type) bool {
 }
 
 // TypeOf returns the type of the Golang native value.
-func TypeOf(x interface{}) Type {
+func TypeOf(x any) Type {
 	switch x := x.(type) {
 	case nil:
-		return NewNull()
+		return Nl
 	case bool:
 		return B
 	case string:
 		return S
 	case json.Number:
 		return N
-	case map[string]interface{}:
-		// The ast.ValueToInterface() function returns ast.Object values as map[string]interface{}
-		// so map[string]interface{} must be handled here because the type checker uses the value
+	case map[string]any:
+		// The ast.ValueToInterface() function returns ast.Object values as map[string]any
+		// so map[string]any must be handled here because the type checker uses the value
 		// to interface conversion when inferring object types.
 		static := make([]*StaticProperty, 0, len(x))
 		for k, v := range x {
 			static = append(static, NewStaticProperty(k, TypeOf(v)))
 		}
 		return NewObject(static, nil)
-	case map[interface{}]interface{}:
+	case map[any]any:
 		static := make([]*StaticProperty, 0, len(x))
 		for k, v := range x {
 			static = append(static, NewStaticProperty(k, TypeOf(v)))
 		}
 		return NewObject(static, nil)
-	case []interface{}:
+	case []any:
 		static := make([]Type, len(x))
 		for i := range x {
 			static[i] = TypeOf(x[i])
@@ -1164,15 +1164,12 @@ func TypeOf(x interface{}) Type {
 type typeSlice []Type
 
 func (s typeSlice) Less(i, j int) bool { return Compare(s[i], s[j]) < 0 }
-func (s typeSlice) Swap(i, j int)      { x := s[i]; s[i] = s[j]; s[j] = x }
+func (s typeSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s typeSlice) Len() int           { return len(s) }
 
 func typeSliceCompare(a, b []Type) int {
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
-	}
-	for i := 0; i < minLen; i++ {
+	minLen := min(len(b), len(a))
+	for i := range minLen {
 		if cmp := Compare(a[i], b[i]); cmp != 0 {
 			return cmp
 		}

@@ -19,7 +19,7 @@ limitations under the License.
 package externalversions
 
 import (
-	"fmt"
+	fmt "fmt"
 
 	v1alpha1 "github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -71,6 +71,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Operator().V1alpha1().TektonInstallerSets().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("tektonpipelines"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Operator().V1alpha1().TektonPipelines().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("tektonpruners"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Operator().V1alpha1().TektonPruners().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("tektonresults"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Operator().V1alpha1().TektonResults().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("tektontriggers"):

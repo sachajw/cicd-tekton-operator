@@ -73,6 +73,8 @@ type Result struct {
 	LokiStackProperties `json:",inline"`
 	// Options holds additions fields and these fields will be updated on the manifests
 	Options AdditionalOptions `json:"options"`
+	// +optional
+	Performance PerformanceProperties `json:"performance,omitempty"`
 }
 
 // ResultsAPIProperties defines the fields which are configurable for
@@ -84,6 +86,9 @@ type ResultsAPIProperties struct {
 	DBSSLMode             string `json:"db_sslmode,omitempty"`
 	DBSSLRootCert         string `json:"db_sslrootcert,omitempty"`
 	DBEnableAutoMigration *bool  `json:"db_enable_auto_migration,omitempty"`
+	DBSecretName          string `json:"db_secret_name,omitempty"`
+	DBSecretUserKey       string `json:"db_secret_user_key,omitempty"`
+	DBSecretPasswordKey   string `json:"db_secret_password_key,omitempty"`
 	ServerPort            *int64 `json:"server_port,omitempty"`
 	PrometheusPort        *int64 `json:"prometheus_port,omitempty"`
 	PrometheusHistogram   *bool  `json:"prometheus_histogram,omitempty"`
@@ -115,6 +120,14 @@ type ResultsAPIProperties struct {
 	LoggingPluginForwarderDelayDuration *uint  `json:"logging_plugin_forwarder_delay_duration,omitempty"`
 	LoggingPluginQueryLimit             *uint  `json:"logging_plugin_query_limit,omitempty"`
 	LoggingPluginQueryParams            string `json:"logging_plugin_query_params,omitempty"`
+	LoggingPluginMultipartRegex         string `json:"logging_plugin_multipart_regex,omitempty"`
+
+	// Route configuration for Results API service exposure
+	RouteEnabled *bool  `json:"route_enabled,omitempty"`
+	RouteHost    string `json:"route_host,omitempty"`
+	RoutePath    string `json:"route_path,omitempty"`
+	// +optional
+	RouteTLSTermination string `json:"route_tls_termination,omitempty"`
 }
 
 // TektonResultStatus defines the observed state of TektonResult

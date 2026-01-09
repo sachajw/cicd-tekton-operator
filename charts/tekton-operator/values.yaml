@@ -14,7 +14,7 @@ openshift:
 installCRDs: false
 
 ## Controllers to install
-controllers: "tektonconfig,tektonpipeline,tektontrigger,tektonhub,tektonchain,tektonresult,tektondashboard,manualapprovalgate"
+controllers: "tektonconfig,tektonpipeline,tektontrigger,tektonhub,tektonchain,tektonresult,tektondashboard,manualapprovalgate,tektonpruner"
 
 ## Control the creation of RBAC resources (Serviceaccount, Role, ClusterRole, ClusterRoleBinding)
 rbac:
@@ -36,6 +36,8 @@ operator:
     pullPolicy: IfNotPresent
     # Overrides the image tag whose default is the chart appVersion.
     tag: ""
+  # Additional environment variables for the tekton-operator-lifecycle container
+  additionalEnvs: []
   autoInstallComponents: true
   # The namespace in which Tekton components should be deployed
   # Defaults to "tekton-pipelines" for Kubernetes and to "openshift-pipelines" for Openshift flavor.
@@ -48,6 +50,12 @@ operator:
   deployment:
     # Custom labels for the Deployment resource.
     customLabels: ""
+    # Custom init containers for the Deployment resource.
+    # Can be used for pre-deployment setup and validation (e.g. waiting for specific resources to be available prior to starting the operator)
+    # see https://kubernetes.io/docs/concepts/workloads/pods/init-containers/
+    initContainers:
+      enabled: false
+      containers: []
     # Custom labels for the Deployment Pod Template.
     podTemplateCustomLabels: ""
 

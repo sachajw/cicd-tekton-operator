@@ -156,7 +156,7 @@ func TestUpdateAdditionControllerConfigMap(t *testing.T) {
 	additionalPACConfig := v1alpha1.AdditionalPACControllerConfig{
 		ConfigMapName: "test-config",
 		SecretName:    "test-secret",
-		Settings:      map[string]string{"application-name": "Test CI application", "hub-url": "https://custom-hub.com"},
+		Settings:      map[string]string{"application-name": "Test CI application", "hub-url": "https://custom-hub-catalog.com"},
 	}
 
 	updatedManifest, err := manifest.Transform(updateAdditionControllerConfigMap(additionalPACConfig))
@@ -178,6 +178,7 @@ func TestUpdateAdditionControllerConfigMap(t *testing.T) {
 	if err != nil {
 		assert.NilError(t, err)
 	}
+
 	assert.NilError(t, err)
 
 	if d := cmp.Diff(cm, expectedCM); d != "" {

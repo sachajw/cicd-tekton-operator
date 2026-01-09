@@ -6,7 +6,7 @@ package topdown
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"math"
 	"math/big"
 	"strconv"
@@ -29,7 +29,7 @@ var maxDateAllowedForNsConversion = time.Unix(0, math.MaxInt64)
 
 func toSafeUnixNano(t time.Time, iter func(*ast.Term) error) error {
 	if t.Before(minDateAllowedForNsConversion) || t.After(maxDateAllowedForNsConversion) {
-		return fmt.Errorf("time outside of valid range")
+		return errors.New("time outside of valid range")
 	}
 
 	return iter(ast.NewTerm(ast.Number(int64ToJSONNumber(t.UnixNano()))))
@@ -127,8 +127,8 @@ func builtinDate(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) er
 		return err
 	}
 	year, month, day := t.Date()
-	result := ast.NewArray(ast.InternedIntNumberTerm(year), ast.InternedIntNumberTerm(int(month)), ast.InternedIntNumberTerm(day))
-	return iter(ast.NewTerm(result))
+
+	return iter(ast.ArrayTerm(ast.InternedIntNumberTerm(year), ast.InternedIntNumberTerm(int(month)), ast.InternedIntNumberTerm(day)))
 }
 
 func builtinClock(_ BuiltinContext, operands []*ast.Term, iter func(*ast.Term) error) error {
@@ -313,7 +313,7 @@ func tzTime(a ast.Value) (t time.Time, lay string, err error) {
 	f := builtins.NumberToFloat(value)
 	i64, acc := f.Int64()
 	if acc != big.Exact {
-		return time.Time{}, layout, fmt.Errorf("timestamp too big")
+		return time.Time{}, layout, errors.New("timestamp too big")
 	}
 
 	t = time.Unix(0, i64).In(loc)

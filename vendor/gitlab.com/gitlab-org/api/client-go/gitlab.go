@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"math/rand"
 	"mime/multipart"
@@ -50,16 +51,19 @@ const (
 
 	headerRateLimit = "RateLimit-Limit"
 	headerRateReset = "RateLimit-Reset"
+
+	AccessTokenHeaderName = "PRIVATE-TOKEN"
+	JobTokenHeaderName    = "JOB-TOKEN"
 )
 
 // AuthType represents an authentication type within GitLab.
 //
-// GitLab API docs: https://docs.gitlab.com/ee/api/
+// GitLab API docs: https://docs.gitlab.com/api/
 type AuthType int
 
 // List of available authentication types.
 //
-// GitLab API docs: https://docs.gitlab.com/ee/api/
+// GitLab API docs: https://docs.gitlab.com/api/
 const (
 	BasicAuth AuthType = iota
 	JobToken
@@ -89,154 +93,203 @@ type Client struct {
 	// Limiter is used to limit API calls and prevent 429 responses.
 	limiter RateLimiter
 
-	// Token type used to make authenticated API calls.
-	authType AuthType
+	// authSource is used to obtain authentication headers.
+	authSource AuthSource
 
-	// Username and password used for basic authentication.
-	username, password string
+	// authSourceInit is used to ensure that AuthSources are initialized only
+	// once.
+	authSourceInit sync.Once
 
-	// Token used to make authenticated API calls.
-	token string
-
-	// Protects the token field from concurrent read/write accesses.
-	tokenLock sync.RWMutex
+	// jar is the cookie jar to use with the HTTP client
+	jar http.CookieJar
 
 	// Default request options applied to every request.
 	defaultRequestOptions []RequestOptionFunc
 
+	// interceptors contain the stack of *http.Client round tripper builder func
+	// which are used to decorate the http.Client#Transport value.
+	interceptors []Interceptor
+
 	// User agent used when communicating with the GitLab API.
 	UserAgent string
 
+	// GraphQL interface
+	GraphQL GraphQLInterface
+
 	// Services used for talking to different parts of the GitLab API.
-	AccessRequests               *AccessRequestsService
-	Appearance                   *AppearanceService
-	Applications                 *ApplicationsService
-	AuditEvents                  *AuditEventsService
-	Avatar                       *AvatarRequestsService
-	AwardEmoji                   *AwardEmojiService
-	Boards                       *IssueBoardsService
-	Branches                     *BranchesService
-	BroadcastMessage             *BroadcastMessagesService
-	BulkImports                  *BulkImportsService
-	CIYMLTemplate                *CIYMLTemplatesService
-	ClusterAgents                *ClusterAgentsService
-	Commits                      *CommitsService
-	ContainerRegistry            *ContainerRegistryService
-	CustomAttribute              *CustomAttributesService
-	DependencyListExport         *DependencyListExportService
-	DeployKeys                   *DeployKeysService
-	DeployTokens                 *DeployTokensService
-	DeploymentMergeRequests      *DeploymentMergeRequestsService
-	Deployments                  *DeploymentsService
-	Discussions                  *DiscussionsService
-	DockerfileTemplate           *DockerfileTemplatesService
-	DORAMetrics                  *DORAMetricsService
-	DraftNotes                   *DraftNotesService
-	Environments                 *EnvironmentsService
-	EpicIssues                   *EpicIssuesService
-	Epics                        *EpicsService
-	ErrorTracking                *ErrorTrackingService
-	Events                       *EventsService
-	ExternalStatusChecks         *ExternalStatusChecksService
-	Features                     *FeaturesService
-	FreezePeriods                *FreezePeriodsService
-	GenericPackages              *GenericPackagesService
-	GeoNodes                     *GeoNodesService
-	GitIgnoreTemplates           *GitIgnoreTemplatesService
-	GroupAccessTokens            *GroupAccessTokensService
-	GroupBadges                  *GroupBadgesService
-	GroupCluster                 *GroupClustersService
-	GroupEpicBoards              *GroupEpicBoardsService
-	GroupImportExport            *GroupImportExportService
-	GroupIssueBoards             *GroupIssueBoardsService
-	GroupIterations              *GroupIterationsService
-	GroupLabels                  *GroupLabelsService
-	GroupMembers                 *GroupMembersService
-	GroupMilestones              *GroupMilestonesService
-	GroupProtectedEnvironments   *GroupProtectedEnvironmentsService
-	GroupRepositoryStorageMove   *GroupRepositoryStorageMoveService
-	GroupSecuritySettings        *GroupSecuritySettingsService
-	GroupSSHCertificates         *GroupSSHCertificatesService
-	GroupVariables               *GroupVariablesService
-	GroupWikis                   *GroupWikisService
-	Groups                       *GroupsService
-	Import                       *ImportService
-	InstanceCluster              *InstanceClustersService
-	InstanceVariables            *InstanceVariablesService
-	Invites                      *InvitesService
-	IssueLinks                   *IssueLinksService
-	Issues                       *IssuesService
-	IssuesStatistics             *IssuesStatisticsService
-	Jobs                         *JobsService
-	JobTokenScope                *JobTokenScopeService
-	Keys                         *KeysService
-	Labels                       *LabelsService
-	License                      *LicenseService
-	LicenseTemplates             *LicenseTemplatesService
-	ManagedLicenses              *ManagedLicensesService
-	Markdown                     *MarkdownService
-	MemberRolesService           *MemberRolesService
-	MergeRequestApprovals        *MergeRequestApprovalsService
-	MergeRequests                *MergeRequestsService
-	MergeTrains                  *MergeTrainsService
-	Metadata                     *MetadataService
-	Milestones                   *MilestonesService
-	Namespaces                   *NamespacesService
-	Notes                        *NotesService
-	NotificationSettings         *NotificationSettingsService
-	Packages                     *PackagesService
-	Pages                        *PagesService
-	PagesDomains                 *PagesDomainsService
-	PersonalAccessTokens         *PersonalAccessTokensService
-	PipelineSchedules            *PipelineSchedulesService
-	PipelineTriggers             *PipelineTriggersService
-	Pipelines                    *PipelinesService
-	PlanLimits                   *PlanLimitsService
-	ProjectAccessTokens          *ProjectAccessTokensService
-	ProjectBadges                *ProjectBadgesService
-	ProjectCluster               *ProjectClustersService
-	ProjectFeatureFlags          *ProjectFeatureFlagService
-	ProjectImportExport          *ProjectImportExportService
-	ProjectIterations            *ProjectIterationsService
-	ProjectMarkdownUploads       *ProjectMarkdownUploadsService
-	ProjectMembers               *ProjectMembersService
-	ProjectMirrors               *ProjectMirrorService
-	ProjectRepositoryStorageMove *ProjectRepositoryStorageMoveService
-	ProjectSnippets              *ProjectSnippetsService
-	ProjectTemplates             *ProjectTemplatesService
-	ProjectVariables             *ProjectVariablesService
-	ProjectVulnerabilities       *ProjectVulnerabilitiesService
-	Projects                     *ProjectsService
-	ProtectedBranches            *ProtectedBranchesService
-	ProtectedEnvironments        *ProtectedEnvironmentsService
-	ProtectedTags                *ProtectedTagsService
-	ReleaseLinks                 *ReleaseLinksService
-	Releases                     *ReleasesService
-	Repositories                 *RepositoriesService
-	RepositoryFiles              *RepositoryFilesService
-	RepositorySubmodules         *RepositorySubmodulesService
-	ResourceGroup                *ResourceGroupService
-	ResourceIterationEvents      *ResourceIterationEventsService
-	ResourceLabelEvents          *ResourceLabelEventsService
-	ResourceMilestoneEvents      *ResourceMilestoneEventsService
-	ResourceStateEvents          *ResourceStateEventsService
-	ResourceWeightEvents         *ResourceWeightEventsService
-	Runners                      *RunnersService
-	Search                       *SearchService
-	Services                     *ServicesService
-	Settings                     *SettingsService
-	Sidekiq                      *SidekiqService
-	SnippetRepositoryStorageMove *SnippetRepositoryStorageMoveService
-	Snippets                     *SnippetsService
-	SystemHooks                  *SystemHooksService
-	Tags                         *TagsService
-	Todos                        *TodosService
-	Topics                       *TopicsService
-	Users                        *UsersService
-	Validate                     *ValidateService
-	Version                      *VersionService
-	Wikis                        *WikisService
+	AccessRequests                   AccessRequestsServiceInterface
+	AlertManagement                  AlertManagementServiceInterface
+	Appearance                       AppearanceServiceInterface
+	Applications                     ApplicationsServiceInterface
+	ApplicationStatistics            ApplicationStatisticsServiceInterface
+	AuditEvents                      AuditEventsServiceInterface
+	Avatar                           AvatarRequestsServiceInterface
+	AwardEmoji                       AwardEmojiServiceInterface
+	Boards                           IssueBoardsServiceInterface
+	Branches                         BranchesServiceInterface
+	BroadcastMessage                 BroadcastMessagesServiceInterface
+	BulkImports                      BulkImportsServiceInterface
+	CIYMLTemplate                    CIYMLTemplatesServiceInterface
+	ClusterAgents                    ClusterAgentsServiceInterface
+	Commits                          CommitsServiceInterface
+	ContainerRegistry                ContainerRegistryServiceInterface
+	ContainerRegistryProtectionRules ContainerRegistryProtectionRulesServiceInterface
+	CustomAttribute                  CustomAttributesServiceInterface
+	DatabaseMigrations               DatabaseMigrationsServiceInterface
+	Dependencies                     DependenciesServiceInterface
+	DependencyListExport             DependencyListExportServiceInterface
+	DependencyProxy                  DependencyProxyServiceInterface
+	DeployKeys                       DeployKeysServiceInterface
+	DeployTokens                     DeployTokensServiceInterface
+	DeploymentMergeRequests          DeploymentMergeRequestsServiceInterface
+	Deployments                      DeploymentsServiceInterface
+	Discussions                      DiscussionsServiceInterface
+	DockerfileTemplate               DockerfileTemplatesServiceInterface
+	DORAMetrics                      DORAMetricsServiceInterface
+	DraftNotes                       DraftNotesServiceInterface
+	EnterpriseUsers                  EnterpriseUsersServiceInterface
+	Environments                     EnvironmentsServiceInterface
+	EpicIssues                       EpicIssuesServiceInterface
+	Epics                            EpicsServiceInterface
+	ErrorTracking                    ErrorTrackingServiceInterface
+	Events                           EventsServiceInterface
+	ExternalStatusChecks             ExternalStatusChecksServiceInterface
+	FeatureFlagUserLists             FeatureFlagUserListsServiceInterface
+	Features                         FeaturesServiceInterface
+	FreezePeriods                    FreezePeriodsServiceInterface
+	GenericPackages                  GenericPackagesServiceInterface
+	GeoNodes                         GeoNodesServiceInterface
+	GeoSites                         GeoSitesServiceInterface
+	GitIgnoreTemplates               GitIgnoreTemplatesServiceInterface
+	GroupAccessTokens                GroupAccessTokensServiceInterface
+	GroupActivityAnalytics           GroupActivityAnalyticsServiceInterface
+	GroupBadges                      GroupBadgesServiceInterface
+	GroupCluster                     GroupClustersServiceInterface
+	GroupEpicBoards                  GroupEpicBoardsServiceInterface
+	GroupImportExport                GroupImportExportServiceInterface
+	Integrations                     IntegrationsServiceInterface
+	GroupIssueBoards                 GroupIssueBoardsServiceInterface
+	GroupIterations                  GroupIterationsServiceInterface
+	GroupLabels                      GroupLabelsServiceInterface
+	GroupMarkdownUploads             GroupMarkdownUploadsServiceInterface
+	GroupMembers                     GroupMembersServiceInterface
+	GroupMilestones                  GroupMilestonesServiceInterface
+	GroupProtectedEnvironments       GroupProtectedEnvironmentsServiceInterface
+	GroupReleases                    GroupReleasesServiceInterface
+	GroupRepositoryStorageMove       GroupRepositoryStorageMoveServiceInterface
+	GroupSCIM                        GroupSCIMServiceInterface
+	GroupSecuritySettings            GroupSecuritySettingsServiceInterface
+	GroupSSHCertificates             GroupSSHCertificatesServiceInterface
+	GroupVariables                   GroupVariablesServiceInterface
+	GroupWikis                       GroupWikisServiceInterface
+	Groups                           GroupsServiceInterface
+	Import                           ImportServiceInterface
+	InstanceCluster                  InstanceClustersServiceInterface
+	InstanceVariables                InstanceVariablesServiceInterface
+	Invites                          InvitesServiceInterface
+	IssueLinks                       IssueLinksServiceInterface
+	Issues                           IssuesServiceInterface
+	IssuesStatistics                 IssuesStatisticsServiceInterface
+	Jobs                             JobsServiceInterface
+	JobTokenScope                    JobTokenScopeServiceInterface
+	Keys                             KeysServiceInterface
+	Labels                           LabelsServiceInterface
+	License                          LicenseServiceInterface
+	LicenseTemplates                 LicenseTemplatesServiceInterface
+	Markdown                         MarkdownServiceInterface
+	MemberRolesService               MemberRolesServiceInterface
+	MergeRequestApprovals            MergeRequestApprovalsServiceInterface
+	MergeRequestApprovalSettings     MergeRequestApprovalSettingsServiceInterface
+	MergeRequests                    MergeRequestsServiceInterface
+	MergeTrains                      MergeTrainsServiceInterface
+	Metadata                         MetadataServiceInterface
+	Milestones                       MilestonesServiceInterface
+	Namespaces                       NamespacesServiceInterface
+	Notes                            NotesServiceInterface
+	NotificationSettings             NotificationSettingsServiceInterface
+	Packages                         PackagesServiceInterface
+	Pages                            PagesServiceInterface
+	PagesDomains                     PagesDomainsServiceInterface
+	PersonalAccessTokens             PersonalAccessTokensServiceInterface
+	PipelineSchedules                PipelineSchedulesServiceInterface
+	PipelineTriggers                 PipelineTriggersServiceInterface
+	Pipelines                        PipelinesServiceInterface
+	PlanLimits                       PlanLimitsServiceInterface
+	ProjectAccessTokens              ProjectAccessTokensServiceInterface
+	ProjectBadges                    ProjectBadgesServiceInterface
+	ProjectCluster                   ProjectClustersServiceInterface
+	ProjectFeatureFlags              ProjectFeatureFlagServiceInterface
+	ProjectImportExport              ProjectImportExportServiceInterface
+	ProjectIterations                ProjectIterationsServiceInterface
+	ProjectMarkdownUploads           ProjectMarkdownUploadsServiceInterface
+	ProjectMembers                   ProjectMembersServiceInterface
+	ProjectMirrors                   ProjectMirrorServiceInterface
+	ProjectRepositoryStorageMove     ProjectRepositoryStorageMoveServiceInterface
+	ProjectSecuritySettings          ProjectSecuritySettingsServiceInterface
+	ProjectSnippets                  ProjectSnippetsServiceInterface
+	ProjectTemplates                 ProjectTemplatesServiceInterface
+	ProjectVariables                 ProjectVariablesServiceInterface
+	ProjectVulnerabilities           ProjectVulnerabilitiesServiceInterface
+	Projects                         ProjectsServiceInterface
+	ProtectedBranches                ProtectedBranchesServiceInterface
+	ProtectedEnvironments            ProtectedEnvironmentsServiceInterface
+	ProtectedTags                    ProtectedTagsServiceInterface
+	ReleaseLinks                     ReleaseLinksServiceInterface
+	Releases                         ReleasesServiceInterface
+	Repositories                     RepositoriesServiceInterface
+	RepositoryFiles                  RepositoryFilesServiceInterface
+	RepositorySubmodules             RepositorySubmodulesServiceInterface
+	ResourceGroup                    ResourceGroupServiceInterface
+	ResourceIterationEvents          ResourceIterationEventsServiceInterface
+	ResourceLabelEvents              ResourceLabelEventsServiceInterface
+	ResourceMilestoneEvents          ResourceMilestoneEventsServiceInterface
+	ResourceStateEvents              ResourceStateEventsServiceInterface
+	ResourceWeightEvents             ResourceWeightEventsServiceInterface
+	Runners                          RunnersServiceInterface
+	Search                           SearchServiceInterface
+	SecureFiles                      SecureFilesServiceInterface
+	Services                         ServicesServiceInterface
+	Settings                         SettingsServiceInterface
+	Sidekiq                          SidekiqServiceInterface
+	SnippetRepositoryStorageMove     SnippetRepositoryStorageMoveServiceInterface
+	Snippets                         SnippetsServiceInterface
+	SystemHooks                      SystemHooksServiceInterface
+	Tags                             TagsServiceInterface
+	TerraformStates                  TerraformStatesServiceInterface
+	Todos                            TodosServiceInterface
+	Topics                           TopicsServiceInterface
+	UsageData                        UsageDataServiceInterface
+	Users                            UsersServiceInterface
+	Validate                         ValidateServiceInterface
+	Version                          VersionServiceInterface
+	Wikis                            WikisServiceInterface
 }
+
+// Interceptor is used to build a *http.Client request pipeline,
+//
+// It receives the next RoundTripper in the chain and returns a new one that
+// will be used for the request.
+//
+// This next RoundTripper might or might not be the actual transporter,
+// which actually does the request call,
+// but it is safe to assume that calling the next will result in the expected HTTP call.
+//
+// Example:
+//
+//	// Simple logger interceptor.
+//	logger := func(next http.RoundTripper) http.RoundTripper {
+//	    return roundtripperFunc(func(req *http.Request) (*http.Response, error) {
+//	        fmt.Printf("Request: %s %s\n", req.Method, req.URL)
+//	        resp, err := next.RoundTrip(req)
+//	        if err == nil {
+//	            fmt.Printf("Response status: %d\n", resp.StatusCode)
+//	        }
+//	        return resp, err
+//	    })
+//	}
+//
+// The Interceptor type lets you add such middlewares to a client by chaining them.
+type Interceptor func(next http.RoundTripper) http.RoundTripper
 
 // ListOptions specifies the optional parameters to various List methods that
 // support pagination.
@@ -263,56 +316,60 @@ type RateLimiter interface {
 // NewClient returns a new GitLab API client. To use API methods which require
 // authentication, provide a valid private or personal token.
 func NewClient(token string, options ...ClientOptionFunc) (*Client, error) {
-	client, err := newClient(options...)
-	if err != nil {
-		return nil, err
-	}
-	client.authType = PrivateToken
-	client.token = token
-	return client, nil
+	as := AccessTokenAuthSource{Token: token}
+	return NewAuthSourceClient(as, options...)
 }
 
-// NewBasicAuthClient returns a new GitLab API client. To use API methods which
-// require authentication, provide a valid username and password.
+// NewBasicAuthClient returns a new GitLab API client using the OAuth 2.0 Resource Owner Password Credentials flow.
+// The provided username and password are used to obtain an OAuth access token
+// from GitLab's token endpoint on the first API request. The token is then
+// cached, reused for subsequent requests, and refreshed when expired.
+//
+// The Resource Owner Password Credentials flow is only suitable for trusted,
+// first-party applications and does not work for users who have two-factor
+// authentication enabled.
+//
+// Note: This method uses OAuth tokens with Bearer authentication, not HTTP Basic Auth.
+//
+// Deprecated: GitLab recommends against using this authentication method.
 func NewBasicAuthClient(username, password string, options ...ClientOptionFunc) (*Client, error) {
-	client, err := newClient(options...)
-	if err != nil {
-		return nil, err
+	as := &PasswordCredentialsAuthSource{
+		Username: username,
+		Password: password,
 	}
 
-	client.authType = BasicAuth
-	client.username = username
-	client.password = password
-
-	return client, nil
+	return NewAuthSourceClient(as, options...)
 }
 
 // NewJobClient returns a new GitLab API client. To use API methods which require
 // authentication, provide a valid job token.
 func NewJobClient(token string, options ...ClientOptionFunc) (*Client, error) {
-	client, err := newClient(options...)
-	if err != nil {
-		return nil, err
-	}
-	client.authType = JobToken
-	client.token = token
-	return client, nil
+	as := JobTokenAuthSource{Token: token}
+	return NewAuthSourceClient(as, options...)
 }
 
-// NewOAuthClient returns a new GitLab API client. To use API methods which
-// require authentication, provide a valid oauth token.
+// NewOAuthClient returns a new GitLab API client using a static OAuth bearer token for authentication.
+//
+// Deprecated: use NewAuthSourceClient with a StaticTokenSource instead. For example:
+//
+//	ts := oauth2.StaticTokenSource(
+//	    &oauth2.Token{AccessToken: "YOUR STATIC TOKEN"},
+//	)
+//	c, err := gitlab.NewAuthSourceClient(gitlab.OAuthTokenSource{ts})
 func NewOAuthClient(token string, options ...ClientOptionFunc) (*Client, error) {
-	client, err := newClient(options...)
-	if err != nil {
-		return nil, err
+	as := OAuthTokenSource{
+		TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
 	}
-	client.authType = OAuthToken
-	client.token = token
-	return client, nil
+
+	return NewAuthSourceClient(as, options...)
 }
 
-func newClient(options ...ClientOptionFunc) (*Client, error) {
-	c := &Client{UserAgent: userAgent}
+// NewAuthSourceClient returns a new GitLab API client that uses the AuthSource for authentication.
+func NewAuthSourceClient(as AuthSource, options ...ClientOptionFunc) (*Client, error) {
+	c := &Client{
+		UserAgent:  userAgent,
+		authSource: as,
+	}
 
 	// Configure the HTTP client.
 	c.client = &retryablehttp.Client{
@@ -338,6 +395,20 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 		}
 	}
 
+	decorateHTTPClientTransportWithInterceptors(c)
+
+	// Wire up the cookie jar.
+	// The ClientOptionFunc can't do it directly,
+	// because the user may also specify HTTPClient
+	// and we want the order of passing those to matter
+	// as little as possible.
+	if c.jar != nil {
+		if c.client.HTTPClient.Jar != nil {
+			return nil, errors.New("conflicting option functions when creating client. The provided HTTP Client already has a Jar configured, therefore you can't use gitlab.WithCookieJar")
+		}
+		c.client.HTTPClient.Jar = c.jar
+	}
+
 	// If no custom limiter was set using a client option, configure
 	// the default rate limiter with values that implicitly disable
 	// rate limiting until an initial HTTP call is done and we can
@@ -349,10 +420,15 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	// Create the internal timeStats service.
 	timeStats := &timeStatsService{client: c}
 
+	// GraphQL interface
+	c.GraphQL = &GraphQL{client: c}
+
 	// Create all the public services.
 	c.AccessRequests = &AccessRequestsService{client: c}
+	c.AlertManagement = &AlertManagementService{client: c}
 	c.Appearance = &AppearanceService{client: c}
 	c.Applications = &ApplicationsService{client: c}
+	c.ApplicationStatistics = &ApplicationStatisticsService{client: c}
 	c.AuditEvents = &AuditEventsService{client: c}
 	c.Avatar = &AvatarRequestsService{client: c}
 	c.AwardEmoji = &AwardEmojiService{client: c}
@@ -364,8 +440,12 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	c.ClusterAgents = &ClusterAgentsService{client: c}
 	c.Commits = &CommitsService{client: c}
 	c.ContainerRegistry = &ContainerRegistryService{client: c}
+	c.ContainerRegistryProtectionRules = &ContainerRegistryProtectionRulesService{client: c}
 	c.CustomAttribute = &CustomAttributesService{client: c}
+	c.DatabaseMigrations = &DatabaseMigrationsService{client: c}
+	c.Dependencies = &DependenciesService{client: c}
 	c.DependencyListExport = &DependencyListExportService{client: c}
+	c.DependencyProxy = &DependencyProxyService{client: c}
 	c.DeployKeys = &DeployKeysService{client: c}
 	c.DeployTokens = &DeployTokensService{client: c}
 	c.DeploymentMergeRequests = &DeploymentMergeRequestsService{client: c}
@@ -374,29 +454,37 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	c.DockerfileTemplate = &DockerfileTemplatesService{client: c}
 	c.DORAMetrics = &DORAMetricsService{client: c}
 	c.DraftNotes = &DraftNotesService{client: c}
+	c.EnterpriseUsers = &EnterpriseUsersService{client: c}
 	c.Environments = &EnvironmentsService{client: c}
 	c.EpicIssues = &EpicIssuesService{client: c}
 	c.Epics = &EpicsService{client: c}
 	c.ErrorTracking = &ErrorTrackingService{client: c}
 	c.Events = &EventsService{client: c}
 	c.ExternalStatusChecks = &ExternalStatusChecksService{client: c}
+	c.FeatureFlagUserLists = &FeatureFlagUserListsService{client: c}
 	c.Features = &FeaturesService{client: c}
 	c.FreezePeriods = &FreezePeriodsService{client: c}
 	c.GenericPackages = &GenericPackagesService{client: c}
 	c.GeoNodes = &GeoNodesService{client: c}
+	c.GeoSites = &GeoSitesService{client: c}
 	c.GitIgnoreTemplates = &GitIgnoreTemplatesService{client: c}
 	c.GroupAccessTokens = &GroupAccessTokensService{client: c}
+	c.GroupActivityAnalytics = &GroupActivityAnalyticsService{client: c}
 	c.GroupBadges = &GroupBadgesService{client: c}
 	c.GroupCluster = &GroupClustersService{client: c}
 	c.GroupEpicBoards = &GroupEpicBoardsService{client: c}
 	c.GroupImportExport = &GroupImportExportService{client: c}
+	c.Integrations = &IntegrationsService{client: c}
 	c.GroupIssueBoards = &GroupIssueBoardsService{client: c}
 	c.GroupIterations = &GroupIterationsService{client: c}
 	c.GroupLabels = &GroupLabelsService{client: c}
+	c.GroupMarkdownUploads = &GroupMarkdownUploadsService{client: c}
 	c.GroupMembers = &GroupMembersService{client: c}
 	c.GroupMilestones = &GroupMilestonesService{client: c}
 	c.GroupProtectedEnvironments = &GroupProtectedEnvironmentsService{client: c}
+	c.GroupReleases = &GroupReleasesService{client: c}
 	c.GroupRepositoryStorageMove = &GroupRepositoryStorageMoveService{client: c}
+	c.GroupSCIM = &GroupSCIMService{client: c}
 	c.GroupSecuritySettings = &GroupSecuritySettingsService{client: c}
 	c.GroupSSHCertificates = &GroupSSHCertificatesService{client: c}
 	c.GroupVariables = &GroupVariablesService{client: c}
@@ -415,10 +503,10 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	c.Labels = &LabelsService{client: c}
 	c.License = &LicenseService{client: c}
 	c.LicenseTemplates = &LicenseTemplatesService{client: c}
-	c.ManagedLicenses = &ManagedLicensesService{client: c}
 	c.Markdown = &MarkdownService{client: c}
 	c.MemberRolesService = &MemberRolesService{client: c}
 	c.MergeRequestApprovals = &MergeRequestApprovalsService{client: c}
+	c.MergeRequestApprovalSettings = &MergeRequestApprovalSettingsService{client: c}
 	c.MergeRequests = &MergeRequestsService{client: c, timeStats: timeStats}
 	c.MergeTrains = &MergeTrainsService{client: c}
 	c.Metadata = &MetadataService{client: c}
@@ -444,6 +532,7 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	c.ProjectMembers = &ProjectMembersService{client: c}
 	c.ProjectMirrors = &ProjectMirrorService{client: c}
 	c.ProjectRepositoryStorageMove = &ProjectRepositoryStorageMoveService{client: c}
+	c.ProjectSecuritySettings = &ProjectSecuritySettingsService{client: c}
 	c.ProjectSnippets = &ProjectSnippetsService{client: c}
 	c.ProjectTemplates = &ProjectTemplatesService{client: c}
 	c.ProjectVariables = &ProjectVariablesService{client: c}
@@ -465,6 +554,7 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	c.ResourceWeightEvents = &ResourceWeightEventsService{client: c}
 	c.Runners = &RunnersService{client: c}
 	c.Search = &SearchService{client: c}
+	c.SecureFiles = &SecureFilesService{client: c}
 	c.Services = &ServicesService{client: c}
 	c.Settings = &SettingsService{client: c}
 	c.Sidekiq = &SidekiqService{client: c}
@@ -472,14 +562,34 @@ func newClient(options ...ClientOptionFunc) (*Client, error) {
 	c.SnippetRepositoryStorageMove = &SnippetRepositoryStorageMoveService{client: c}
 	c.SystemHooks = &SystemHooksService{client: c}
 	c.Tags = &TagsService{client: c}
+	c.TerraformStates = &TerraformStatesService{client: c}
 	c.Todos = &TodosService{client: c}
 	c.Topics = &TopicsService{client: c}
+	c.UsageData = &UsageDataService{client: c}
 	c.Users = &UsersService{client: c}
 	c.Validate = &ValidateService{client: c}
 	c.Version = &VersionService{client: c}
 	c.Wikis = &WikisService{client: c}
 
 	return c, nil
+}
+
+func decorateHTTPClientTransportWithInterceptors(c *Client) {
+	if len(c.interceptors) == 0 {
+		return
+	}
+	c.client.HTTPClient.Transport = chainInterceptors(c.client.HTTPClient.Transport, c.interceptors...)
+}
+
+func chainInterceptors(rt http.RoundTripper, interceptors ...Interceptor) http.RoundTripper {
+	for i := len(interceptors) - 1; i >= 0; i-- {
+		rt = interceptors[i](rt)
+	}
+	return rt
+}
+
+func (c *Client) HTTPClient() *http.Client {
+	return c.client.HTTPClient
 }
 
 // retryHTTPCheck provides a callback for Client.CheckRetry which
@@ -609,7 +719,7 @@ func (c *Client) setBaseURL(urlStr string) error {
 // Relative URL paths should always be specified without a preceding slash.
 // If specified, the value pointed to by body is JSON encoded and included
 // as the request body.
-func (c *Client) NewRequest(method, path string, opt interface{}, options []RequestOptionFunc) (*retryablehttp.Request, error) {
+func (c *Client) NewRequest(method, path string, opt any, options []RequestOptionFunc) (*retryablehttp.Request, error) {
 	u := *c.baseURL
 	unescaped, err := url.PathUnescape(path)
 	if err != nil {
@@ -620,6 +730,14 @@ func (c *Client) NewRequest(method, path string, opt interface{}, options []Requ
 	u.RawPath = c.baseURL.Path + path
 	u.Path = c.baseURL.Path + unescaped
 
+	return c.NewRequestToURL(method, &u, opt, options)
+}
+
+func (c *Client) NewRequestToURL(method string, u *url.URL, opt any, options []RequestOptionFunc) (*retryablehttp.Request, error) {
+	if u.Scheme != c.baseURL.Scheme || u.Host != c.baseURL.Host {
+		return nil, fmt.Errorf("client only allows requests to URLs matching the clients configured base URL. Got %q, base URL is %q", u.String(), c.baseURL.String())
+	}
+
 	// Create a request specific headers map.
 	reqHeaders := make(http.Header)
 	reqHeaders.Set("Accept", "application/json")
@@ -628,16 +746,17 @@ func (c *Client) NewRequest(method, path string, opt interface{}, options []Requ
 		reqHeaders.Set("User-Agent", c.UserAgent)
 	}
 
-	var body interface{}
+	var body any
 	switch {
 	case method == http.MethodPatch || method == http.MethodPost || method == http.MethodPut:
 		reqHeaders.Set("Content-Type", "application/json")
 
 		if opt != nil {
-			body, err = json.Marshal(opt)
+			b, err := json.Marshal(opt)
 			if err != nil {
 				return nil, err
 			}
+			body = b
 		}
 	case opt != nil:
 		q, err := query.Values(opt)
@@ -662,9 +781,7 @@ func (c *Client) NewRequest(method, path string, opt interface{}, options []Requ
 	}
 
 	// Set the request specific headers.
-	for k, v := range reqHeaders {
-		req.Header[k] = v
-	}
+	maps.Copy(req.Header, reqHeaders)
 
 	return req, nil
 }
@@ -674,7 +791,7 @@ func (c *Client) NewRequest(method, path string, opt interface{}, options []Requ
 // URL of the Client. Relative URL paths should always be specified without
 // a preceding slash. If specified, the value pointed to by body is JSON
 // encoded and included as the request body.
-func (c *Client) UploadRequest(method, path string, content io.Reader, filename string, uploadType UploadType, opt interface{}, options []RequestOptionFunc) (*retryablehttp.Request, error) {
+func (c *Client) UploadRequest(method, path string, content io.Reader, filename string, uploadType UploadType, opt any, options []RequestOptionFunc) (*retryablehttp.Request, error) {
 	u := *c.baseURL
 	unescaped, err := url.PathUnescape(path)
 	if err != nil {
@@ -738,9 +855,7 @@ func (c *Client) UploadRequest(method, path string, content io.Reader, filename 
 	}
 
 	// Set the request specific headers.
-	for k, v := range reqHeaders {
-		req.Header[k] = v
-	}
+	maps.Copy(req.Header, reqHeaders)
 
 	return req, nil
 }
@@ -843,58 +958,45 @@ func (r *Response) populateLinkValues() {
 // error if an API error has occurred. If v implements the io.Writer
 // interface, the raw response body will be written to v, without attempting to
 // first decode it.
-func (c *Client) Do(req *retryablehttp.Request, v interface{}) (*Response, error) {
+func (c *Client) Do(req *retryablehttp.Request, v any) (*Response, error) {
 	// Wait will block until the limiter can obtain a new token.
 	err := c.limiter.Wait(req.Context())
 	if err != nil {
 		return nil, err
 	}
 
-	// Set the correct authentication header. If using basic auth, then check
-	// if we already have a token and if not first authenticate and get one.
-	var basicAuthToken string
-	switch c.authType {
-	case BasicAuth:
-		c.tokenLock.RLock()
-		basicAuthToken = c.token
-		c.tokenLock.RUnlock()
-		if basicAuthToken == "" {
-			// If we don't have a token yet, we first need to request one.
-			basicAuthToken, err = c.requestOAuthToken(req.Context(), basicAuthToken)
-			if err != nil {
-				return nil, err
-			}
-		}
-		req.Header.Set("Authorization", "Bearer "+basicAuthToken)
-	case JobToken:
-		if values := req.Header.Values("JOB-TOKEN"); len(values) == 0 {
-			req.Header.Set("JOB-TOKEN", c.token)
-		}
-	case OAuthToken:
-		if values := req.Header.Values("Authorization"); len(values) == 0 {
-			req.Header.Set("Authorization", "Bearer "+c.token)
-		}
-	case PrivateToken:
-		if values := req.Header.Values("PRIVATE-TOKEN"); len(values) == 0 {
-			req.Header.Set("PRIVATE-TOKEN", c.token)
-		}
+	c.authSourceInit.Do(func() {
+		err = c.authSource.Init(req.Context(), c)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initializing token source failed: %w", err)
 	}
 
-	resp, err := c.client.Do(req)
+	authKey, authValue, err := c.authSource.Header(req.Context())
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode == http.StatusUnauthorized && c.authType == BasicAuth {
-		resp.Body.Close()
-		// The token most likely expired, so we need to request a new one and try again.
-		if _, err := c.requestOAuthToken(req.Context(), basicAuthToken); err != nil {
-			return nil, err
-		}
-		return c.Do(req, v)
+	if v := req.Header.Values(authKey); len(v) == 0 {
+		req.Header.Set(authKey, authValue)
 	}
-	defer resp.Body.Close()
-	defer io.Copy(io.Discard, resp.Body)
+
+	client := c.client
+
+	if cr := checkRetryFromContext(req.Context()); cr != nil {
+		// for avoid overwriting c.client. Use copy of c.client and apply checkRetry from request context
+		client = c.newRetryableHTTPClientWithRetryCheck(cr)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	// If not yet configured, try to configure the rate limiter
 	// using the response headers we just received. Fail silently
@@ -921,46 +1023,36 @@ func (c *Client) Do(req *retryablehttp.Request, v interface{}) (*Response, error
 	return response, err
 }
 
-func (c *Client) requestOAuthToken(ctx context.Context, token string) (string, error) {
-	c.tokenLock.Lock()
-	defer c.tokenLock.Unlock()
+func (c *Client) endpoint() oauth2.Endpoint {
+	baseURL := strings.TrimSuffix(c.baseURL.String(), apiVersionPath)
 
-	// Return early if the token was updated while waiting for the lock.
-	if c.token != token {
-		return c.token, nil
+	return oauth2.Endpoint{
+		AuthURL:       baseURL + "oauth/authorize",
+		TokenURL:      baseURL + "oauth/token",
+		DeviceAuthURL: baseURL + "oauth/authorize_device",
 	}
-
-	config := &oauth2.Config{
-		Endpoint: oauth2.Endpoint{
-			AuthURL:  strings.TrimSuffix(c.baseURL.String(), apiVersionPath) + "oauth/authorize",
-			TokenURL: strings.TrimSuffix(c.baseURL.String(), apiVersionPath) + "oauth/token",
-		},
-	}
-
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.client.HTTPClient)
-	t, err := config.PasswordCredentialsToken(ctx, c.username, c.password)
-	if err != nil {
-		return "", err
-	}
-	c.token = t.AccessToken
-
-	return c.token, nil
 }
+
+// ErrInvalidIDType is returned when a function expecting an ID as either an integer
+// or string receives a different type. This error commonly occurs when working with
+// GitLab resources like groups and projects which support both numeric IDs and
+// path-based string identifiers.
+var ErrInvalidIDType = errors.New("the ID must be an int or a string")
 
 // Helper function to accept and format both the project ID or name as project
 // identifier for all API calls.
-func parseID(id interface{}) (string, error) {
+func parseID(id any) (string, error) {
 	switch v := id.(type) {
 	case int:
 		return strconv.Itoa(v), nil
 	case string:
 		return v, nil
 	default:
-		return "", fmt.Errorf("invalid ID type %#v, the ID must be an int or a string", id)
+		return "", fmt.Errorf("invalid ID type %#v, %w", id, ErrInvalidIDType)
 	}
 }
 
-// Helper function to escape a project identifier.
+// PathEscape is a helper function to escape a project identifier.
 func PathEscape(s string) string {
 	return strings.ReplaceAll(url.PathEscape(s), ".", "%2E")
 }
@@ -968,7 +1060,7 @@ func PathEscape(s string) string {
 // An ErrorResponse reports one or more errors caused by an API request.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/index.html#data-validation-and-error-reporting
+// https://docs.gitlab.com/api/rest/troubleshooting/
 type ErrorResponse struct {
 	Body     []byte
 	Response *http.Response
@@ -976,7 +1068,10 @@ type ErrorResponse struct {
 }
 
 func (e *ErrorResponse) Error() string {
-	path, _ := url.QueryUnescape(e.Response.Request.URL.Path)
+	path := e.Response.Request.URL.RawPath
+	if path == "" {
+		path = e.Response.Request.URL.Path
+	}
 	url := fmt.Sprintf("%s://%s%s", e.Response.Request.URL.Scheme, e.Response.Request.URL.Host, path)
 
 	if e.Message == "" {
@@ -984,6 +1079,10 @@ func (e *ErrorResponse) Error() string {
 	} else {
 		return fmt.Sprintf("%s %s: %d %s", e.Response.Request.Method, url, e.Response.StatusCode, e.Message)
 	}
+}
+
+func (e *ErrorResponse) HasStatusCode(statusCode int) bool {
+	return e != nil && e.Response != nil && e.Response.StatusCode == statusCode
 }
 
 // CheckResponse checks the API response for errors, and returns them if present.
@@ -1001,7 +1100,7 @@ func CheckResponse(r *http.Response) error {
 	if err == nil && strings.TrimSpace(string(data)) != "" {
 		errorResponse.Body = data
 
-		var raw interface{}
+		var raw any
 		if err := json.Unmarshal(data, &raw); err != nil {
 			errorResponse.Message = fmt.Sprintf("failed to parse unknown error format: %s", data)
 		} else {
@@ -1031,19 +1130,19 @@ func CheckResponse(r *http.Response) error {
 //	    },
 //	    "error": "<error-message>"
 //	}
-func parseError(raw interface{}) string {
+func parseError(raw any) string {
 	switch raw := raw.(type) {
 	case string:
 		return raw
 
-	case []interface{}:
+	case []any:
 		var errs []string
 		for _, v := range raw {
 			errs = append(errs, parseError(v))
 		}
 		return fmt.Sprintf("[%s]", strings.Join(errs, ", "))
 
-	case map[string]interface{}:
+	case map[string]any:
 		var errs []string
 		for k, v := range raw {
 			errs = append(errs, fmt.Sprintf("{%s: %s}", k, parseError(v)))
@@ -1054,4 +1153,113 @@ func parseError(raw interface{}) string {
 	default:
 		return fmt.Sprintf("failed to parse unexpected error type: %T", raw)
 	}
+}
+
+func HasStatusCode(err error, statusCode int) bool {
+	var errResponse *ErrorResponse
+	if !errors.As(err, &errResponse) {
+		return false
+	}
+
+	return errResponse.HasStatusCode(statusCode)
+}
+
+// newRetryableHTTPClientWithRetryCheck returns a `retryablehttp.Client` clone of itself with the given CheckRetry function
+func (c *Client) newRetryableHTTPClientWithRetryCheck(cr retryablehttp.CheckRetry) *retryablehttp.Client {
+	return &retryablehttp.Client{
+		HTTPClient:     c.client.HTTPClient,
+		Logger:         c.client.Logger,
+		RetryWaitMin:   c.client.RetryWaitMin,
+		RetryWaitMax:   c.client.RetryWaitMax,
+		RetryMax:       c.client.RetryMax,
+		RequestLogHook: c.client.RequestLogHook,
+		CheckRetry:     cr,
+		Backoff:        c.client.Backoff,
+		ErrorHandler:   c.client.ErrorHandler,
+		PrepareRetry:   c.client.PrepareRetry,
+	}
+}
+
+// AuthSource is used to obtain access tokens.
+type AuthSource interface {
+	// Init is called once before making any requests.
+	// If the token source needs access to client to initialize itself, it should do so here.
+	Init(context.Context, *Client) error
+
+	// Header returns an authentication header. When no error is returned, the
+	// key and value should never be empty.
+	Header(ctx context.Context) (key, value string, err error)
+}
+
+// OAuthTokenSource wraps an oauth2.TokenSource to implement the AuthSource interface.
+type OAuthTokenSource struct {
+	TokenSource oauth2.TokenSource
+}
+
+func (OAuthTokenSource) Init(context.Context, *Client) error {
+	return nil
+}
+
+func (as OAuthTokenSource) Header(_ context.Context) (string, string, error) {
+	t, err := as.TokenSource.Token()
+	if err != nil {
+		return "", "", err
+	}
+
+	return "Authorization", "Bearer " + t.AccessToken, nil
+}
+
+// JobTokenAuthSource used as an AuthSource for CI Job Tokens
+type JobTokenAuthSource struct {
+	Token string
+}
+
+func (JobTokenAuthSource) Init(context.Context, *Client) error {
+	return nil
+}
+
+func (s JobTokenAuthSource) Header(_ context.Context) (string, string, error) {
+	return JobTokenHeaderName, s.Token, nil
+}
+
+// AccessTokenAuthSource used as an AuthSource for various access tokens, like Personal-, Project- and Group- Access Tokens.
+// Can be used for all tokens that authorize with the Private-Token header.
+type AccessTokenAuthSource struct {
+	Token string
+}
+
+func (AccessTokenAuthSource) Init(context.Context, *Client) error {
+	return nil
+}
+
+func (s AccessTokenAuthSource) Header(_ context.Context) (string, string, error) {
+	return AccessTokenHeaderName, s.Token, nil
+}
+
+// PasswordCredentialsAuthSource implements the AuthSource interface for the OAuth 2.0
+// resource owner password credentials flow.
+type PasswordCredentialsAuthSource struct {
+	Username string
+	Password string
+
+	AuthSource
+}
+
+func (as *PasswordCredentialsAuthSource) Init(ctx context.Context, client *Client) error {
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, client.client.HTTPClient)
+
+	config := &oauth2.Config{
+		Endpoint: client.endpoint(),
+	}
+
+	pct, err := config.PasswordCredentialsToken(ctx, as.Username, as.Password)
+	if err != nil {
+		return fmt.Errorf("PasswordCredentialsToken(%q, ******): %w", as.Username, err)
+	}
+
+	as.AuthSource = OAuthTokenSource{
+		config.TokenSource(ctx, pct),
+	}
+
+	return nil
 }

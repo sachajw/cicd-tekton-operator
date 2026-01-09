@@ -32,6 +32,10 @@ spec:
   params:
   - name: createRbacResource
     value: "true"
+  - name: legacyPipelineRbac
+    value: "true"
+  - name: createCABundleConfigMaps
+    value: "true"
   pruner:
     resources:
     - pipelinerun

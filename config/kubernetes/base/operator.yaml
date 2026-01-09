@@ -33,11 +33,13 @@ spec:
         image: ko://github.com/tektoncd/operator/cmd/kubernetes/operator
         args:
         - "-controllers"
-        - "tektonconfig,tektonpipeline,tektontrigger,tektonhub,tektonchain,tektonresult,tektondashboard,manualapprovalgate"
+        - "tektonconfig,tektonpipeline,tektontrigger,tektonhub,tektonchain,tektonresult,tektondashboard,manualapprovalgate,tektonpruner"
         - "-unique-process-name"
         - "tekton-operator-lifecycle"
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         env:
+        - name: KUBERNETES_MIN_VERSION
+          value: "v1.0.0"
         - name: SYSTEM_NAMESPACE
           valueFrom:
             fieldRef:
@@ -85,8 +87,10 @@ spec:
         - "tektoninstallerset"
         - "-unique-process-name"
         - "tekton-operator-cluster-operations"
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         env:
+          - name: KUBERNETES_MIN_VERSION
+            value: "v1.0.0"
           - name: SYSTEM_NAMESPACE
             valueFrom:
               fieldRef:

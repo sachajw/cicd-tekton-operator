@@ -22,10 +22,33 @@ import (
 	"time"
 )
 
+type (
+	AccessRequestsServiceInterface interface {
+		ListProjectAccessRequests(pid any, opt *ListAccessRequestsOptions, options ...RequestOptionFunc) ([]*AccessRequest, *Response, error)
+		ListGroupAccessRequests(gid any, opt *ListAccessRequestsOptions, options ...RequestOptionFunc) ([]*AccessRequest, *Response, error)
+		RequestProjectAccess(pid any, options ...RequestOptionFunc) (*AccessRequest, *Response, error)
+		RequestGroupAccess(gid any, options ...RequestOptionFunc) (*AccessRequest, *Response, error)
+		ApproveProjectAccessRequest(pid any, user int, opt *ApproveAccessRequestOptions, options ...RequestOptionFunc) (*AccessRequest, *Response, error)
+		ApproveGroupAccessRequest(gid any, user int, opt *ApproveAccessRequestOptions, options ...RequestOptionFunc) (*AccessRequest, *Response, error)
+		DenyProjectAccessRequest(pid any, user int, options ...RequestOptionFunc) (*Response, error)
+		DenyGroupAccessRequest(gid any, user int, options ...RequestOptionFunc) (*Response, error)
+	}
+
+	// AccessRequestsService handles communication with the project/group
+	// access requests related methods of the GitLab API.
+	//
+	// GitLab API docs: https://docs.gitlab.com/api/access_requests/
+	AccessRequestsService struct {
+		client *Client
+	}
+)
+
+var _ AccessRequestsServiceInterface = (*AccessRequestsService)(nil)
+
 // AccessRequest represents a access request for a group or project.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html
+// https://docs.gitlab.com/api/access_requests/
 type AccessRequest struct {
 	ID          int              `json:"id"`
 	Username    string           `json:"username"`
@@ -36,27 +59,19 @@ type AccessRequest struct {
 	AccessLevel AccessLevelValue `json:"access_level"`
 }
 
-// AccessRequestsService handles communication with the project/group
-// access requests related methods of the GitLab API.
-//
-// GitLab API docs: https://docs.gitlab.com/ee/api/access_requests.html
-type AccessRequestsService struct {
-	client *Client
-}
-
 // ListAccessRequestsOptions represents the available
 // ListProjectAccessRequests() or ListGroupAccessRequests() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#list-access-requests-for-a-group-or-project
+// https://docs.gitlab.com/api/access_requests/#list-access-requests-for-a-group-or-project
 type ListAccessRequestsOptions ListOptions
 
 // ListProjectAccessRequests gets a list of access requests
 // viewable by the authenticated user.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#list-access-requests-for-a-group-or-project
-func (s *AccessRequestsService) ListProjectAccessRequests(pid interface{}, opt *ListAccessRequestsOptions, options ...RequestOptionFunc) ([]*AccessRequest, *Response, error) {
+// https://docs.gitlab.com/api/access_requests/#list-access-requests-for-a-group-or-project
+func (s *AccessRequestsService) ListProjectAccessRequests(pid any, opt *ListAccessRequestsOptions, options ...RequestOptionFunc) ([]*AccessRequest, *Response, error) {
 	project, err := parseID(pid)
 	if err != nil {
 		return nil, nil, err
@@ -81,8 +96,8 @@ func (s *AccessRequestsService) ListProjectAccessRequests(pid interface{}, opt *
 // viewable by the authenticated user.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#list-access-requests-for-a-group-or-project
-func (s *AccessRequestsService) ListGroupAccessRequests(gid interface{}, opt *ListAccessRequestsOptions, options ...RequestOptionFunc) ([]*AccessRequest, *Response, error) {
+// https://docs.gitlab.com/api/access_requests/#list-access-requests-for-a-group-or-project
+func (s *AccessRequestsService) ListGroupAccessRequests(gid any, opt *ListAccessRequestsOptions, options ...RequestOptionFunc) ([]*AccessRequest, *Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, nil, err
@@ -107,8 +122,8 @@ func (s *AccessRequestsService) ListGroupAccessRequests(gid interface{}, opt *Li
 // to a group or project.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#request-access-to-a-group-or-project
-func (s *AccessRequestsService) RequestProjectAccess(pid interface{}, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
+// https://docs.gitlab.com/api/access_requests/#request-access-to-a-group-or-project
+func (s *AccessRequestsService) RequestProjectAccess(pid any, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
 	project, err := parseID(pid)
 	if err != nil {
 		return nil, nil, err
@@ -133,8 +148,8 @@ func (s *AccessRequestsService) RequestProjectAccess(pid interface{}, options ..
 // to a group or project.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#request-access-to-a-group-or-project
-func (s *AccessRequestsService) RequestGroupAccess(gid interface{}, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
+// https://docs.gitlab.com/api/access_requests/#request-access-to-a-group-or-project
+func (s *AccessRequestsService) RequestGroupAccess(gid any, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, nil, err
@@ -159,7 +174,7 @@ func (s *AccessRequestsService) RequestGroupAccess(gid interface{}, options ...R
 // ApproveProjectAccessRequest() and ApproveGroupAccessRequest() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#approve-an-access-request
+// https://docs.gitlab.com/api/access_requests/#approve-an-access-request
 type ApproveAccessRequestOptions struct {
 	AccessLevel *AccessLevelValue `url:"access_level,omitempty" json:"access_level,omitempty"`
 }
@@ -167,8 +182,8 @@ type ApproveAccessRequestOptions struct {
 // ApproveProjectAccessRequest approves an access request for the given user.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#approve-an-access-request
-func (s *AccessRequestsService) ApproveProjectAccessRequest(pid interface{}, user int, opt *ApproveAccessRequestOptions, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
+// https://docs.gitlab.com/api/access_requests/#approve-an-access-request
+func (s *AccessRequestsService) ApproveProjectAccessRequest(pid any, user int, opt *ApproveAccessRequestOptions, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
 	project, err := parseID(pid)
 	if err != nil {
 		return nil, nil, err
@@ -192,8 +207,8 @@ func (s *AccessRequestsService) ApproveProjectAccessRequest(pid interface{}, use
 // ApproveGroupAccessRequest approves an access request for the given user.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#approve-an-access-request
-func (s *AccessRequestsService) ApproveGroupAccessRequest(gid interface{}, user int, opt *ApproveAccessRequestOptions, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
+// https://docs.gitlab.com/api/access_requests/#approve-an-access-request
+func (s *AccessRequestsService) ApproveGroupAccessRequest(gid any, user int, opt *ApproveAccessRequestOptions, options ...RequestOptionFunc) (*AccessRequest, *Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, nil, err
@@ -217,8 +232,8 @@ func (s *AccessRequestsService) ApproveGroupAccessRequest(gid interface{}, user 
 // DenyProjectAccessRequest denies an access request for the given user.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#deny-an-access-request
-func (s *AccessRequestsService) DenyProjectAccessRequest(pid interface{}, user int, options ...RequestOptionFunc) (*Response, error) {
+// https://docs.gitlab.com/api/access_requests/#deny-an-access-request
+func (s *AccessRequestsService) DenyProjectAccessRequest(pid any, user int, options ...RequestOptionFunc) (*Response, error) {
 	project, err := parseID(pid)
 	if err != nil {
 		return nil, err
@@ -236,8 +251,8 @@ func (s *AccessRequestsService) DenyProjectAccessRequest(pid interface{}, user i
 // DenyGroupAccessRequest denies an access request for the given user.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/access_requests.html#deny-an-access-request
-func (s *AccessRequestsService) DenyGroupAccessRequest(gid interface{}, user int, options ...RequestOptionFunc) (*Response, error) {
+// https://docs.gitlab.com/api/access_requests/#deny-an-access-request
+func (s *AccessRequestsService) DenyGroupAccessRequest(gid any, user int, options ...RequestOptionFunc) (*Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, err

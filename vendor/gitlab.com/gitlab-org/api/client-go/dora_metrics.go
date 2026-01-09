@@ -21,25 +21,35 @@ import (
 	"net/http"
 )
 
-// DORAMetricsService handles communication with the DORA metrics related methods
-// of the GitLab API.
-//
-// Gitlab API docs: https://docs.gitlab.com/ee/api/dora/metrics.html
-type DORAMetricsService struct {
-	client *Client
-}
+type (
+	// DORAMetricsServiceInterface defines all the API methods for the DORAMetricsService
+	DORAMetricsServiceInterface interface {
+		GetProjectDORAMetrics(pid any, opt GetDORAMetricsOptions, options ...RequestOptionFunc) ([]DORAMetric, *Response, error)
+		GetGroupDORAMetrics(gid any, opt GetDORAMetricsOptions, options ...RequestOptionFunc) ([]DORAMetric, *Response, error)
+	}
+
+	// DORAMetricsService handles communication with the DORA metrics related methods
+	// of the GitLab API.
+	//
+	// Gitlab API docs: https://docs.gitlab.com/api/dora/metrics/
+	DORAMetricsService struct {
+		client *Client
+	}
+)
+
+var _ DORAMetricsServiceInterface = (*DORAMetricsService)(nil)
 
 // DORAMetric represents a single DORA metric data point.
 //
-// Gitlab API docs: https://docs.gitlab.com/ee/api/dora/metrics.html
+// Gitlab API docs: https://docs.gitlab.com/api/dora/metrics/
 type DORAMetric struct {
 	Date  string  `json:"date"`
 	Value float64 `json:"value"`
 }
 
-// Gets a string representation of a DORAMetric data point
+// String gets a string representation of a DORAMetric data point
 //
-// GitLab API docs: https://docs.gitlab.com/ee/api/dora/metrics.html
+// GitLab API docs: https://docs.gitlab.com/api/dora/metrics/
 func (m DORAMetric) String() string {
 	return Stringify(m)
 }
@@ -47,23 +57,20 @@ func (m DORAMetric) String() string {
 // GetDORAMetricsOptions represent the request body options for getting
 // DORA metrics
 //
-// GitLab API docs: https://docs.gitlab.com/ee/api/dora/metrics.html
+// GitLab API docs: https://docs.gitlab.com/api/dora/metrics/
 type GetDORAMetricsOptions struct {
 	Metric           *DORAMetricType     `url:"metric,omitempty" json:"metric,omitempty"`
 	EndDate          *ISOTime            `url:"end_date,omitempty" json:"end_date,omitempty"`
 	EnvironmentTiers *[]string           `url:"environment_tiers,comma,omitempty" json:"environment_tiers,omitempty"`
 	Interval         *DORAMetricInterval `url:"interval,omitempty" json:"interval,omitempty"`
 	StartDate        *ISOTime            `url:"start_date,omitempty" json:"start_date,omitempty"`
-
-	// Deprecated, use environment tiers instead
-	EnvironmentTier *string `url:"environment_tier,omitempty" json:"environment_tier,omitempty"`
 }
 
 // GetProjectDORAMetrics gets the DORA metrics for a project.
 //
 // GitLab API Docs:
-// https://docs.gitlab.com/ee/api/dora/metrics.html#get-project-level-dora-metrics
-func (s *DORAMetricsService) GetProjectDORAMetrics(pid interface{}, opt GetDORAMetricsOptions, options ...RequestOptionFunc) ([]DORAMetric, *Response, error) {
+// https://docs.gitlab.com/api/dora/metrics/#get-project-level-dora-metrics
+func (s *DORAMetricsService) GetProjectDORAMetrics(pid any, opt GetDORAMetricsOptions, options ...RequestOptionFunc) ([]DORAMetric, *Response, error) {
 	project, err := parseID(pid)
 	if err != nil {
 		return nil, nil, err
@@ -87,8 +94,8 @@ func (s *DORAMetricsService) GetProjectDORAMetrics(pid interface{}, opt GetDORAM
 // GetGroupDORAMetrics gets the DORA metrics for a group.
 //
 // GitLab API Docs:
-// https://docs.gitlab.com/ee/api/dora/metrics.html#get-group-level-dora-metrics
-func (s *DORAMetricsService) GetGroupDORAMetrics(gid interface{}, opt GetDORAMetricsOptions, options ...RequestOptionFunc) ([]DORAMetric, *Response, error) {
+// https://docs.gitlab.com/api/dora/metrics/#get-group-level-dora-metrics
+func (s *DORAMetricsService) GetGroupDORAMetrics(gid any, opt GetDORAMetricsOptions, options ...RequestOptionFunc) ([]DORAMetric, *Response, error) {
 	group, err := parseID(gid)
 	if err != nil {
 		return nil, nil, err

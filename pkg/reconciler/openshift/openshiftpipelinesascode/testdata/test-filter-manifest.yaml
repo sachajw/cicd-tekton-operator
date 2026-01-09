@@ -77,6 +77,12 @@ data:
   # you may want to disable this if you think your pipeline may leak some value
   error-log-snippet: "true"
 
+  # The number of lines to display in error log snippets, when `error-log-snippet` is
+  # set to "true".
+  # The GitHub Check interface (via the GitHub App) has a 65,535 character limit,
+  # so consider using a conservative value for this setting.
+  error-log-snippet-number-of-lines: "3"
+
   # Enable or disable the inspection of container logs to detect error message
   # and expose them as annotations on Pull Request. Only Github apps is supported
   error-detection-from-container-logs: "true"
@@ -89,6 +95,18 @@ data:
   # The default regexp used when we use the simple error detection
   error-detection-simple-regexp: |
     ^(?P<filename>[^:]*):(?P<line>[0-9]+):(?P<column>[0-9]+)?([ ]*)?(?P<error>.*)
+
+  # Global setting to control whether Pipelines-as-Code should automatically cancel
+  # any in-progress PipelineRuns associated with a pull request when that pull request is updated.
+  # This helps prevent multiple redundant runs from executing simultaneously.
+  # Default value: false.
+  enable-cancel-in-progress-on-pull-requests: "false"
+
+  # Global setting to determine whether Pipelines-as-Code should automatically cancel
+  # in-progress PipelineRuns triggered by a push event, if a new push occurs on the same branch.
+  # This prevents overlapping or redundant runs for the same branch.
+  # Default value: false.
+  enable-cancel-in-progress-on-push: "false"
 
   # Since public bitbucket doesn't have the concept of Secret, we need to be
   # able to secure the request by querying https://ip-ranges.atlassian.com/,
@@ -130,6 +148,20 @@ data:
   #
   # you may want to disable this if ok-to-test should be done on each iteration
   remember-ok-to-test: "true"
+
+  # require-ok-to-test-sha enforces that a pull request's commit SHA must be specified
+  # in an `/ok-to-test` comment. This prevents a race condition where a malicious
+  # user could push a bad commit after the `/ok-to-test` comment is posted but
+  # before the CI runs.
+  # Default: false
+  require-ok-to-test-sha: "false"
+
+  # When enabled, this option prevents duplicate pipeline runs when a commit appears in
+  # both a push event and a pull request. If a push event comes from a commit that is
+  # part of an open pull request, the push event will be skipped as it would create
+  # a duplicate pipeline run.
+  # Default: true
+  skip-push-event-for-pr-commits: "true"
 
   # Configure a custom console here, the driver support custom parameters from
   # Repo CR along a few other template variable, see documentation for more

@@ -30,6 +30,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/tektoncd/operator/pkg/reconciler/kubernetes/tektoninstallerset/client"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -49,11 +51,13 @@ import (
 )
 
 const (
-	DbSecretName          = "tekton-results-postgres"
-	TlsSecretName         = "tekton-results-tls"
-	CertificateBlockType  = "CERTIFICATE"
-	PostgresUser          = "result"
-	ECPrivateKeyBlockType = "EC PRIVATE KEY"
+	DefaultDbSecretName          = "tekton-results-postgres"
+	TlsSecretName                = "tekton-results-tls"
+	CertificateBlockType         = "CERTIFICATE"
+	PostgresUser                 = "result"
+	ECPrivateKeyBlockType        = "EC PRIVATE KEY"
+	tektonResultStatefulSetLabel = "statefulset"
+	tektonResultDeploymentLabel  = "deployment"
 )
 
 // Reconciler implements controller.Reconciler for TektonResult resources.
@@ -62,6 +66,8 @@ type Reconciler struct {
 	kubeClientSet kubernetes.Interface
 	// operatorClientSet allows us to configure operator objects
 	operatorClientSet clientset.Interface
+	// installer Set client to do CRUD operations for components
+	installerSetClient *client.InstallerSetClient
 	// manifest is empty, but with a valid client and logger. all
 	// manifests are immutable, and any created during reconcile are
 	// expected to be appended to this one, obviating the passing of
@@ -167,7 +173,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *v1alpha1.TektonResul
 
 	// If the external database is disabled, create a default database and a TLS secret.
 	// Otherwise, verify if the default database secret is already created, and ensure the TLS secret is also created.
-	if !tr.Spec.IsExternalDB {
+	if !tr.Spec.IsExternalDB && tr.Spec.DBSecretName == "" {
 		logger.Debugw("Creating database secret for internal database")
 		if err := r.createDBSecret(ctx, tr); err != nil {
 			logger.Errorw("Failed to create database secret", "error", err)
@@ -180,8 +186,12 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *v1alpha1.TektonResul
 		}
 		logger.Infow("Successfully created database and TLS secrets")
 	} else {
+		customDbSecretName := DefaultDbSecretName
+		if tr.Spec.DBSecretName != "" {
+			customDbSecretName = tr.Spec.DBSecretName
+		}
 		logger.Debugw("Validating external database secrets")
-		if err := r.validateSecretsAreCreated(ctx, tr, DbSecretName); err != nil {
+		if err := r.validateSecretsAreCreated(ctx, tr, customDbSecretName); err != nil {
 			logger.Errorw("Failed to validate database secrets", "error", err)
 			return err
 		}
@@ -195,6 +205,20 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *v1alpha1.TektonResul
 
 	tr.Status.MarkDependenciesInstalled()
 	logger.Info("All dependencies installed successfully")
+
+	//Result watcher is deployed as statefulset, ensure deployment installerset is deleted
+	if tr.Spec.Performance.StatefulsetOrdinals != nil && *tr.Spec.Performance.StatefulsetOrdinals {
+		if err := r.installerSetClient.CleanupWithLabelInstallTypeDeployment(ctx, v1alpha1.ResultResourceName); err != nil {
+			logger.Error("failed to delete main deployment installer set: %v", err)
+			return err
+		}
+	} else {
+		// Result watcher is deployed as deployment, ensure statefulset installerset is deleted
+		if err := r.installerSetClient.CleanupWithLabelInstallTypeStatefulset(ctx, v1alpha1.ResultResourceName); err != nil {
+			logger.Error("failed to delete main statefulset installer set: %v", err)
+			return err
+		}
+	}
 
 	if err := r.extension.PreReconcile(ctx, tr); err != nil {
 		if err == v1alpha1.REQUEUE_EVENT_AFTER {
@@ -227,6 +251,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *v1alpha1.TektonResul
 	if existingInstallerSet == "" {
 		logger.Info("No existing installer set found, creating new one")
 		createdIs, err := r.createInstallerSet(ctx, tr, manifest)
+
 		if err != nil {
 			logger.Errorw("Failed to create installer set", "error", err)
 			return err
@@ -235,7 +260,6 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tr *v1alpha1.TektonResul
 		r.updateTektonResultsStatus(ctx, tr, createdIs)
 		return v1alpha1.REQUEUE_EVENT_AFTER
 	}
-
 	// If exists, then fetch the TektonInstallerSet
 	logger.Debugw("Fetching existing installer set", "name", existingInstallerSet)
 	installedTIS, err := r.operatorClientSet.OperatorV1alpha1().TektonInstallerSets().
@@ -439,23 +463,23 @@ func (r *Reconciler) createDBSecret(ctx context.Context, tr *v1alpha1.TektonResu
 	logger := logging.FromContext(ctx)
 
 	// Get the DB secret, if not found then create the DB secret
-	_, err := r.kubeClientSet.CoreV1().Secrets(tr.Spec.TargetNamespace).Get(ctx, DbSecretName, metav1.GetOptions{})
+	_, err := r.kubeClientSet.CoreV1().Secrets(tr.Spec.TargetNamespace).Get(ctx, DefaultDbSecretName, metav1.GetOptions{})
 	if err == nil {
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {
-		logger.Errorf("failed to find default TektonResult database secret %s in namespace %s: %v", DbSecretName, tr.Spec.TargetNamespace, err)
+		logger.Errorf("failed to find default TektonResult database secret %s in namespace %s: %v", DefaultDbSecretName, tr.Spec.TargetNamespace, err)
 		return err
 	}
-	newDBSecret, err := r.generateDBSecret(DbSecretName, tr.Spec.TargetNamespace, tr)
+	newDBSecret, err := r.generateDBSecret(DefaultDbSecretName, tr.Spec.TargetNamespace, tr)
 	if err != nil {
-		logger.Errorf("failed to generate default TektonResult database secret %s: %s", DbSecretName, err)
+		logger.Errorf("failed to generate default TektonResult database secret %s: %s", DefaultDbSecretName, err)
 		return err
 	}
 	_, err = r.kubeClientSet.CoreV1().Secrets(tr.Spec.TargetNamespace).Create(ctx, newDBSecret, metav1.CreateOptions{})
 	if err != nil {
-		logger.Errorf("failed to create default TektonResult database secret %s in namespace %s: %v", DbSecretName, tr.Spec.TargetNamespace, err)
-		tr.Status.MarkDependencyMissing(fmt.Sprintf("Default db %s creation is failing", DbSecretName))
+		logger.Errorf("failed to create default TektonResult database secret %s in namespace %s: %v", DefaultDbSecretName, tr.Spec.TargetNamespace, err)
+		tr.Status.MarkDependencyMissing(fmt.Sprintf("Default db %s creation is failing", DefaultDbSecretName))
 		return err
 	}
 	return nil
@@ -464,6 +488,11 @@ func (r *Reconciler) createDBSecret(ctx context.Context, tr *v1alpha1.TektonResu
 // Create default TLS certificates for the database
 func (r *Reconciler) createTLSSecret(ctx context.Context, tr *v1alpha1.TektonResult) error {
 	logger := logging.FromContext(ctx)
+
+	if v1alpha1.IsOpenShiftPlatform() {
+		logger.Info("Skipping default TLS secret creation: running on OpenShift platform")
+		return nil
+	}
 
 	_, err := r.kubeClientSet.CoreV1().Secrets(tr.Spec.TargetNamespace).Get(ctx, TlsSecretName, metav1.GetOptions{})
 	if err == nil {

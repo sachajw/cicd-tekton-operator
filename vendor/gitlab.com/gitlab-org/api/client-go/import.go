@@ -20,19 +20,31 @@ import (
 	"net/http"
 )
 
-// ImportService handles communication with the import
-// related methods of the GitLab API.
-//
-// GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html
-type ImportService struct {
-	client *Client
-}
+type (
+	ImportServiceInterface interface {
+		ImportRepositoryFromGitHub(opt *ImportRepositoryFromGitHubOptions, options ...RequestOptionFunc) (*GitHubImport, *Response, error)
+		CancelGitHubProjectImport(opt *CancelGitHubProjectImportOptions, options ...RequestOptionFunc) (*CancelledGitHubImport, *Response, error)
+		ImportGitHubGistsIntoGitLabSnippets(opt *ImportGitHubGistsIntoGitLabSnippetsOptions, options ...RequestOptionFunc) (*Response, error)
+		ImportRepositoryFromBitbucketServer(opt *ImportRepositoryFromBitbucketServerOptions, options ...RequestOptionFunc) (*BitbucketServerImport, *Response, error)
+		ImportRepositoryFromBitbucketCloud(opt *ImportRepositoryFromBitbucketCloudOptions, options ...RequestOptionFunc) (*BitbucketCloudImport, *Response, error)
+	}
+
+	// ImportService handles communication with the import
+	// related methods of the GitLab API.
+	//
+	// GitLab API docs:
+	// https://docs.gitlab.com/api/import/
+	ImportService struct {
+		client *Client
+	}
+)
+
+var _ ImportServiceInterface = (*ImportService)(nil)
 
 // GitHubImport represents the response from an import from GitHub.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-github
+// https://docs.gitlab.com/api/import/#import-repository-from-github
 type GitHubImport struct {
 	ID                    int    `json:"id"`
 	Name                  string `json:"name"`
@@ -55,7 +67,7 @@ func (s GitHubImport) String() string {
 // ImportRepositoryFromGitHub() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-github
+// https://docs.gitlab.com/api/import/#import-repository-from-github
 type ImportRepositoryFromGitHubOptions struct {
 	PersonalAccessToken *string `url:"personal_access_token,omitempty" json:"personal_access_token,omitempty"`
 	RepoID              *int    `url:"repo_id,omitempty" json:"repo_id,omitempty"`
@@ -70,10 +82,10 @@ type ImportRepositoryFromGitHubOptions struct {
 	TimeoutStrategy *string `url:"timeout_strategy,omitempty" json:"timeout_strategy,omitempty"`
 }
 
-// Import a repository from GitHub.
+// ImportRepositoryFromGitHub imports a repository from GitHub.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-github
+// https://docs.gitlab.com/api/import/#import-repository-from-github
 func (s *ImportService) ImportRepositoryFromGitHub(opt *ImportRepositoryFromGitHubOptions, options ...RequestOptionFunc) (*GitHubImport, *Response, error) {
 	req, err := s.client.NewRequest(http.MethodPost, "import/github", opt, options)
 	if err != nil {
@@ -93,7 +105,7 @@ func (s *ImportService) ImportRepositoryFromGitHub(opt *ImportRepositoryFromGitH
 // an import from GitHub.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#cancel-github-project-import
+// https://docs.gitlab.com/api/import/#cancel-github-project-import
 type CancelledGitHubImport struct {
 	ID                    int    `json:"id"`
 	Name                  string `json:"name"`
@@ -113,15 +125,15 @@ func (s CancelledGitHubImport) String() string {
 // CancelGitHubProjectImport() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#cancel-github-project-import
+// https://docs.gitlab.com/api/import/#cancel-github-project-import
 type CancelGitHubProjectImportOptions struct {
 	ProjectID *int `url:"project_id,omitempty" json:"project_id,omitempty"`
 }
 
-// Cancel an import of a repository from GitHub.
+// CancelGitHubProjectImport cancels an import of a repository from GitHub.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#cancel-github-project-import
+// https://docs.gitlab.com/api/import/#cancel-github-project-import
 func (s *ImportService) CancelGitHubProjectImport(opt *CancelGitHubProjectImportOptions, options ...RequestOptionFunc) (*CancelledGitHubImport, *Response, error) {
 	req, err := s.client.NewRequest(http.MethodPost, "import/github/cancel", opt, options)
 	if err != nil {
@@ -141,15 +153,15 @@ func (s *ImportService) CancelGitHubProjectImport(opt *CancelGitHubProjectImport
 // ImportGitHubGistsIntoGitLabSnippets() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-github-gists-into-gitlab-snippets
+// https://docs.gitlab.com/api/import/#import-github-gists-into-gitlab-snippets
 type ImportGitHubGistsIntoGitLabSnippetsOptions struct {
 	PersonalAccessToken *string `url:"personal_access_token,omitempty" json:"personal_access_token,omitempty"`
 }
 
-// Import personal GitHub Gists into personal GitLab Snippets.
+// ImportGitHubGistsIntoGitLabSnippets imports personal GitHub Gists into personal GitLab Snippets.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-github-gists-into-gitlab-snippets
+// https://docs.gitlab.com/api/import/#import-github-gists-into-gitlab-snippets
 func (s *ImportService) ImportGitHubGistsIntoGitLabSnippets(opt *ImportGitHubGistsIntoGitLabSnippetsOptions, options ...RequestOptionFunc) (*Response, error) {
 	req, err := s.client.NewRequest(http.MethodPost, "import/github/gists", opt, options)
 	if err != nil {
@@ -163,7 +175,7 @@ func (s *ImportService) ImportGitHubGistsIntoGitLabSnippets(opt *ImportGitHubGis
 // Server.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-bitbucket-server
+// https://docs.gitlab.com/api/import/#import-repository-from-bitbucket-server
 type BitbucketServerImport struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
@@ -179,7 +191,7 @@ func (s BitbucketServerImport) String() string {
 // ImportRepositoryFromBitbucketServerOptions represents the available ImportRepositoryFromBitbucketServer() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-bitbucket-server
+// https://docs.gitlab.com/api/import/#import-repository-from-bitbucket-server
 type ImportRepositoryFromBitbucketServerOptions struct {
 	BitbucketServerUrl      *string `url:"bitbucket_server_url,omitempty" json:"bitbucket_server_url,omitempty"`
 	BitbucketServerUsername *string `url:"bitbucket_server_username,omitempty" json:"bitbucket_server_username,omitempty"`
@@ -191,10 +203,10 @@ type ImportRepositoryFromBitbucketServerOptions struct {
 	TimeoutStrategy         *string `url:"timeout_strategy,omitempty" json:"timeout_strategy,omitempty"`
 }
 
-// Import a repository from Bitbucket Server.
+// ImportRepositoryFromBitbucketServer imports a repository from Bitbucket Server.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-bitbucket-server
+// https://docs.gitlab.com/api/import/#import-repository-from-bitbucket-server
 func (s *ImportService) ImportRepositoryFromBitbucketServer(opt *ImportRepositoryFromBitbucketServerOptions, options ...RequestOptionFunc) (*BitbucketServerImport, *Response, error) {
 	req, err := s.client.NewRequest(http.MethodPost, "import/bitbucket_server", opt, options)
 	if err != nil {
@@ -214,7 +226,7 @@ func (s *ImportService) ImportRepositoryFromBitbucketServer(opt *ImportRepositor
 // Cloud.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-bitbucket-cloud
+// https://docs.gitlab.com/api/import/#import-repository-from-bitbucket-cloud
 type BitbucketCloudImport struct {
 	ID                    int    `json:"id"`
 	Name                  string `json:"name"`
@@ -237,7 +249,7 @@ func (s BitbucketCloudImport) String() string {
 // ImportRepositoryFromBitbucketCloud() options.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-bitbucket-cloud
+// https://docs.gitlab.com/api/import/#import-repository-from-bitbucket-cloud
 type ImportRepositoryFromBitbucketCloudOptions struct {
 	BitbucketUsername    *string `url:"bitbucket_username,omitempty" json:"bitbucket_username,omitempty"`
 	BitbucketAppPassword *string `url:"bitbucket_app_password,omitempty" json:"bitbucket_app_password,omitempty"`
@@ -246,10 +258,10 @@ type ImportRepositoryFromBitbucketCloudOptions struct {
 	NewName              *string `url:"new_name,omitempty" json:"new_name,omitempty"`
 }
 
-// Import a repository from Bitbucket Cloud.
+// ImportRepositoryFromBitbucketCloud imports a repository from Bitbucket Cloud.
 //
 // GitLab API docs:
-// https://docs.gitlab.com/ee/api/import.html#import-repository-from-bitbucket-cloud
+// https://docs.gitlab.com/api/import/#import-repository-from-bitbucket-cloud
 func (s *ImportService) ImportRepositoryFromBitbucketCloud(opt *ImportRepositoryFromBitbucketCloudOptions, options ...RequestOptionFunc) (*BitbucketCloudImport, *Response, error) {
 	req, err := s.client.NewRequest(http.MethodPost, "import/bitbucket", opt, options)
 	if err != nil {
